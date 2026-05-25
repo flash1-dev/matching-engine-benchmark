@@ -1,0 +1,241 @@
+/*
+ * piyush_adapter.cpp — PIYUSH-KUMAR1809/order-matching-engine behind the
+ * matching_engine_api.h harness ABI.
+ *
+ * Drives the engine's StandardMatchingStrategy + OrderBook inline (no Exchange
+ * worker thread): the matching code path is identical in either case, and
+ * inline removes thread-sync races that would otherwise confound the audit.
+ *
+ * The engine emits only Trade events (and no Ack/Reject types at all), so the
+ * adapter synthesises OrderAck / CancelAck / ModifyAck / CancelReject /
+ * ModifyReject around the engine. A small shadow map (oid -> {price, side,
+ * remaining qty, alive}) tracks order state for the synthesised reports;
+ * the TradeCallback (well — the strategy's trades vector) keeps it current.
+ *
+ * IOC: piyush has no IOC type. The adapter submits the order as Limit, then
+ * if any residual remains after matching, calls book.cancelOrder + emits a
+ * CancelAck for the residual quantity.
+ *
+ * MODIFY: cancel + reinsert at new price/qty, mirroring the harness contract.
+ */
+#include "matching_engine_api.h"
+
+#include "Exchange.hpp"
+#include "OrderBook.hpp"
+#include "MatchingStrategy.hpp"
+#include "Order.hpp"
+
+#include <cstdint>
+#include <cstring>
+#include <unordered_map>
+#include <vector>
+
+namespace {
+
+const me_transport_t* g_transport = nullptr;
+void*                 g_sink      = nullptr;
+OrderBook*            g_book      = nullptr;
+StandardMatchingStrategy g_strategy;
+
+// Per-order shadow needed because:
+//  - engine emits no OrderAck / CancelAck / ModifyAck — adapter must synth all
+//    of them, and CancelAck needs to echo the order's side and price after the
+//    order has already been removed from the book.
+//  - engine has no IOC support — adapter must detect residual and cancel it.
+//  - successful cancel vs cancel-of-unknown is distinguished only by checking
+//    the shadow (piyush's book.cancelOrder returns void).
+struct Shadow {
+    int64_t  price;
+    uint8_t  side;       // 0 = buy, 1 = sell
+    uint32_t remaining;  // current open quantity
+    bool     alive;
+};
+std::unordered_map<uint64_t, Shadow> g_shadow;
+
+inline void emit(const me_report_t& r) {
+    while (!g_transport->push(g_sink, &r)) {
+        // single-thread inline matching — transport push never fills, but a
+        // burst-batching transport might. spin briefly.
+    }
+}
+
+inline void emit_ack(uint8_t type, uint64_t seq, uint64_t order_id,
+                     uint8_t side, int64_t price, uint32_t qty) {
+    me_report_t r{};
+    r.type            = type;
+    r.sequence_number = seq;
+    r.order_id        = order_id;
+    r.side            = side;
+    r.price_ticks     = price;
+    r.quantity        = qty;
+    emit(r);
+}
+
+// Drain the strategy's trades vector into Trade reports, attributing each fill
+// to the taker (whose seq is taker_seq). Also updates the maker's remaining
+// quantity in the shadow and marks fully-filled orders dead.
+inline uint64_t flush_trades(std::vector<Trade>& trades, uint64_t taker_seq) {
+    uint64_t taker_filled = 0;
+    for (const auto& t : trades) {
+        me_report_t r{};
+        r.type            = ME_TRADE;
+        r.sequence_number = taker_seq;
+        r.price_ticks     = t.price;
+        r.quantity        = t.quantity;
+        r.maker_order_id  = t.makerOrderId;
+        r.taker_order_id  = t.takerOrderId;
+        emit(r);
+        taker_filled += t.quantity;
+        if (auto it = g_shadow.find(t.makerOrderId); it != g_shadow.end()) {
+            if (it->second.remaining >= t.quantity) {
+                it->second.remaining -= t.quantity;
+            } else {
+                it->second.remaining = 0;
+            }
+            if (it->second.remaining == 0) it->second.alive = false;
+        }
+    }
+    trades.clear();
+    return taker_filled;
+}
+
+}  // namespace
+
+extern "C" {
+
+void engine_init(uint64_t /*seed*/, const me_transport_t* transport, void* sink) {
+    g_transport = transport;
+    g_sink      = sink;
+    g_book      = new OrderBook();
+    g_shadow.clear();
+    g_shadow.reserve(1u << 21);   // ~2M entries headroom
+}
+
+void engine_shutdown(void) {
+    delete g_book;
+    g_book = nullptr;
+    g_shadow.clear();
+}
+
+void engine_flush(void) {
+    // Inline matching means there is nothing in flight — every engine_on_* call
+    // ran the matcher synchronously before returning. No barrier needed.
+}
+
+void engine_on_new_order(const new_order_t* o) {
+    emit_ack(ME_ORDER_ACK, o->sequence_number, o->order_id,
+             o->side, o->price_ticks, o->quantity);
+
+    Order order{};
+    order.id            = o->order_id;
+    order.clientOrderId = o->sequence_number;
+    order.symbolId      = 0;
+    order.side          = (o->side == 0) ? OrderSide::Buy : OrderSide::Sell;
+    order.type          = OrderType::Limit;
+    order.price         = static_cast<Price>(o->price_ticks);
+    order.quantity      = o->quantity;
+    order.active        = true;
+
+    std::vector<Trade> trades;
+    trades.reserve(16);
+    g_strategy.match(*g_book, order, trades);
+    uint64_t filled = flush_trades(trades, o->sequence_number);
+
+    const uint32_t residual = (filled < o->quantity)
+                                  ? static_cast<uint32_t>(o->quantity - filled)
+                                  : 0u;
+
+    if (o->ioc) {
+        if (residual > 0) {
+            // piyush has no IOC: the matcher rested any residual. Cancel it and
+            // emit the harness's IOC CancelAck.
+            g_book->cancelOrder(o->order_id);
+            emit_ack(ME_CANCEL_ACK, o->sequence_number, o->order_id,
+                     o->side, o->price_ticks, residual);
+        }
+        // The order's lifecycle ends here either way; not added to shadow.
+        return;
+    }
+
+    // GTC. Insert into shadow at the order's current state.
+    if (residual > 0) {
+        g_shadow[o->order_id] = { o->price_ticks, o->side, residual, true };
+    } else {
+        // Fully filled on submit — alive=false so subsequent cancel/modify reject.
+        g_shadow[o->order_id] = { o->price_ticks, o->side, 0, false };
+    }
+}
+
+void engine_on_cancel(const cancel_t* c) {
+    auto it = g_shadow.find(c->order_id);
+    if (it == g_shadow.end() || !it->second.alive) {
+        emit_ack(ME_CANCEL_REJECT, c->sequence_number, c->order_id, 0, 0, 0);
+        return;
+    }
+    g_book->cancelOrder(c->order_id);
+    const auto& s = it->second;
+    emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
+             s.side, s.price, s.remaining);
+    it->second.alive = false;
+}
+
+void engine_on_modify(const modify_t* m) {
+    auto it = g_shadow.find(m->order_id);
+    if (it == g_shadow.end() || !it->second.alive) {
+        emit_ack(ME_MODIFY_REJECT, m->sequence_number, m->order_id, 0, 0, 0);
+        return;
+    }
+    const uint8_t side = it->second.side;
+    g_book->cancelOrder(m->order_id);
+    emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
+             side, m->new_price_ticks, m->new_quantity);
+
+    // Re-insert at the new price/qty. Matching at the new price may produce
+    // crossing trades; those trades carry the modify message's seq.
+    Order order{};
+    order.id            = m->order_id;
+    order.clientOrderId = m->sequence_number;
+    order.symbolId      = 0;
+    order.side          = (side == 0) ? OrderSide::Buy : OrderSide::Sell;
+    order.type          = OrderType::Limit;
+    order.price         = static_cast<Price>(m->new_price_ticks);
+    order.quantity      = m->new_quantity;
+    order.active        = true;
+
+    std::vector<Trade> trades;
+    trades.reserve(16);
+    g_strategy.match(*g_book, order, trades);
+    const uint64_t filled = flush_trades(trades, m->sequence_number);
+    const uint32_t residual = (filled < m->new_quantity)
+                                  ? static_cast<uint32_t>(m->new_quantity - filled)
+                                  : 0u;
+    it->second = { m->new_price_ticks, side, residual, residual > 0 };
+}
+
+int64_t engine_query_best_bid(void) {
+    Price b = g_book->getBestBid();
+    // piyush returns 0 when no bids (not −1). Translate to the harness's
+    // "no bids" sentinel (INT64_MIN); see api/matching_engine_api.h.
+    if (b == 0 && !g_book->getBidMask().test(0)) return INT64_MIN;
+    return static_cast<int64_t>(b);
+}
+
+int64_t engine_query_best_ask(void) {
+    Price a = g_book->getBestAsk();
+    if (a < 0) return INT64_MAX;
+    return static_cast<int64_t>(a);
+}
+
+uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
+    if (price_ticks < 0 || price_ticks >= OrderBook::MAX_PRICE) return 0;
+    const auto& level = g_book->getLevel(
+        static_cast<Price>(price_ticks),
+        (side == 0) ? OrderSide::Buy : OrderSide::Sell);
+    uint64_t total = 0;
+    for (const auto& o : level.orders) {
+        if (o.active) total += o.quantity;
+    }
+    return total;
+}
+
+}  // extern "C"

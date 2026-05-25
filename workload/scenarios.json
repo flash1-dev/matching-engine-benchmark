@@ -1,0 +1,24 @@
+{
+  "_comment": "Workload calibration for the matching-engine benchmark. These values are compiled into workload/generator.cpp; this file is the human-readable reference. See docs/METHODOLOGY.md.",
+  "tick_size_usd": 0.005,
+  "start_mid_usd": 167.52,
+  "start_mid_ticks": 33504,
+  "power_law_alpha": 2.23,
+  "depth_hump": { "amplitude": 5.0, "center_ticks": 8.0 },
+  "cancel_pct": 0.95,
+  "modify_pct": 0.20,
+  "duplicate_cancel_pct": 0.02,
+  "duplicate_modify_pct": 0.02,
+  "ioc_pct": 0.15,
+  "aggressive_pct": 0.05,
+  "median_lifetime_ms": 0.431,
+  "quantity_range": [1, 100],
+  "new_orders_per_run": 1000000,
+  "scenarios": [
+    { "name": "static",      "volatility": 0.00, "target_swing": 0.00, "note": "Fixed mid-price. Still crosses and matches via marketable orders; isolates data-structure cost from price-path effects." },
+    { "name": "normal",      "volatility": 0.15, "target_swing": 0.02, "note": "Routine intraday session. Canonical — the byte-identical three-baseline consensus is anchored on normal + seed 12345. All five scenarios have published hashes in reference/correctness_hash.txt." },
+    { "name": "swing-25",    "volatility": 0.50, "target_swing": 0.25, "note": "High-volatility trading day." },
+    { "name": "swing-40",    "volatility": 0.50, "target_swing": 0.40, "note": "Stressed market." },
+    { "name": "flash-crash", "volatility": 0.50, "target_swing": 0.60, "note": "Flash-crash dislocation." }
+  ]
+}

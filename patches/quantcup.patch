@@ -1,0 +1,113 @@
+diff --git a/constants.h b/constants.h
+index a7ba60e..1376d56 100644
+--- a/constants.h
++++ b/constants.h
+@@ -12,7 +12,11 @@ namespace OB {
+ 
+ constexpr t_price kMaxPrice = std::numeric_limits<t_price>::max();
+ 
++#ifdef QC_MAX_NUM_ORDERS
++constexpr int kMaxNumOrders = QC_MAX_NUM_ORDERS;
++#else
+ constexpr int kMaxNumOrders = 101000;
++#endif
+ 
+ constexpr t_price kMinPrice = 1;
+ 
+diff --git a/engine.h b/engine.h
+index 215a802..a85b239 100644
+--- a/engine.h
++++ b/engine.h
+@@ -1,7 +1,7 @@
+ #ifndef ENGINE_H_
+ #define ENGINE_H_
+ 
+-#include "limits.h"
++#include "qc_limits.h"
+ #include "types.h"
+ 
+ // EXTERNAL
+diff --git a/order_book.cpp b/order_book.cpp
+index 9f8d742..0f16350 100644
+--- a/order_book.cpp
++++ b/order_book.cpp
+@@ -1,7 +1,7 @@
+ #include <string.h>
+ 
+ #include "engine.h"
+-#include "limits.h"
++#include "qc_limits.h"
+ #include "order_book.h"
+ #include "constants.h"
+ 
+@@ -65,13 +65,17 @@ t_orderid OrderBook::limit(t_order& order) {
+       do {
+         auto bookEntry = ppEntry->begin();
+         while (bookEntry != ppEntry->end()) {
++          /* Report trade at MAKER's resting price (askMin) — matches the
++             passive-fill convention used by Liquibook, Exchange-core, and
++             standard equity exchanges rather than QC's original
++             aggressor-price convention. */
+           if (bookEntry->size < orderSize) {
+-            executeTrade(order.symbol, order.trader, bookEntry->trader, price,
++            executeTrade(order.symbol, order.trader, bookEntry->trader, askMin,
+                          bookEntry->size);
+             orderSize -= bookEntry->size;
+             ++bookEntry;
+           } else {
+-            executeTrade(order.symbol, order.trader, bookEntry->trader, price,
++            executeTrade(order.symbol, order.trader, bookEntry->trader, askMin,
+                          orderSize);
+             if (bookEntry->size > orderSize)
+               bookEntry->size -= orderSize;
+@@ -107,13 +110,14 @@ t_orderid OrderBook::limit(t_order& order) {
+       do {
+         auto bookEntry = ppEntry->begin();
+         while (bookEntry != ppEntry->end()) {
++          /* Report trade at MAKER's resting price (bidMax) — see note above. */
+           if (bookEntry->size < orderSize) {
+-            executeTrade(order.symbol, bookEntry->trader, order.trader, price,
++            executeTrade(order.symbol, bookEntry->trader, order.trader, bidMax,
+                          bookEntry->size);
+             orderSize -= bookEntry->size;
+             ++bookEntry;
+           } else {
+-            executeTrade(order.symbol, bookEntry->trader, order.trader, price,
++            executeTrade(order.symbol, bookEntry->trader, order.trader, bidMax,
+                          orderSize);
+             if (bookEntry->size > orderSize)
+               bookEntry->size -= orderSize;
+diff --git a/qc_limits.h b/qc_limits.h
+new file mode 100644
+index 0000000..e7c18a1
+--- /dev/null
++++ b/qc_limits.h
+@@ -0,0 +1,8 @@
++#pragma once
++#include <climits>
++#include <cstdint>
++#include <limits>
++// POSIX limits needed by <semaphore> transitively
++#ifndef _POSIX_SEM_VALUE_MAX
++#define _POSIX_SEM_VALUE_MAX 32767
++#endif
+diff --git a/types.h b/types.h
+index ff5c8d2..0fbe4d0 100644
+--- a/types.h
++++ b/types.h
+@@ -1,6 +1,6 @@
+ #pragma once
+ 
+-#include "limits.h"
++#include "qc_limits.h"
+ #include "constants.h"
+ #include <boost/serialization/strong_typedef.hpp>
+ #include <array>
+diff --git a/util.h b/util.h
+new file mode 100644
+index 0000000..a70c387
+--- /dev/null
++++ b/util.h
+@@ -0,0 +1,2 @@
++#pragma once
++// Stub — utility macros from the original C version are unused in the C++ port.

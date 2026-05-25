@@ -1,0 +1,12 @@
+# Canonical seed list for the matching-engine benchmark.
+#
+# Every scenario is generated deterministically from (scenario, count, seed).
+# The published correctness hash (reference/correctness_hash.txt) is for the
+# `normal` scenario, 1,000,000 new orders, seed 12345.
+#
+# seed   scenario      role
+12345    normal        canonical (published correctness hash)
+12345    static
+12345    swing-25
+12345    swing-40
+12345    flash-crash

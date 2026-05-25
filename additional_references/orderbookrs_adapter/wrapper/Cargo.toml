@@ -1,0 +1,23 @@
+[package]
+name = "orderbookrs_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols.
+[lib]
+name = "orderbookrs_adapter"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Pinned by ME_ORDERBOOKRS_SRC / build.sh — path is filled in at build time.
+orderbook-rs = { path = "../../../third_party/OrderBook-rs" }
+pricelevel = "0.7"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"

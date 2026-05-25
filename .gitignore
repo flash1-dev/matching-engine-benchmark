@@ -1,0 +1,39 @@
+# Build output
+build/
+/harness
+/generator
+*.o
+*.so
+*.a
+
+# Compiled Java helper + generated EC classpath (build_baselines.sh artifacts)
+*.class
+/exchange_core.classpath
+
+# Generated workload caches
+orders_*.bin
+workload/cache/
+
+# Benchmark result files
+results/
+
+# Third-party engine sources fetched by build_baselines.sh or by the
+# additional_references/<name>_adapter/build.sh scripts. The bundled SHA-256
+# reference implementation under third_party/sha256.{c,h} is kept.
+third_party/*/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors / OS
+.DS_Store
+*.swp
+
+# Reference canonical text — shipped compressed as .gz; the uncompressed form
+# is regenerated locally by `./harness --write-reference` or by gunzip. The
+# canonical_output_<scenario>.txt copies are produced by --write-reference on
+# non-canonical scenarios and are not committed.
+reference/canonical_output.txt
+reference/canonical_output_*.txt
+CONSISTENCY_REVIEW.md
