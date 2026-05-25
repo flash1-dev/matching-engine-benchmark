@@ -111,14 +111,16 @@ regeneration of `reference/correctness_hash.txt`.)
 
 ## On-disk format
 
-`orders_<scenario>.bin`: a 16-byte header `[u64 magic][u32 version][u32 count]`
-then `count` fixed 40-byte records:
+`orders_<scenario>_seed<seed>_count<count>.bin`: a 16-byte header
+`[u64 magic][u32 version][u32 count]` then `count` fixed 40-byte records:
 
     [u8 type][u8 side][u8 ioc][u8 pad][u32 quantity]
     [u64 sequence_number][u64 order_id][i64 price_ticks][i64 reserved]
 
-`type` is 0 = NEW, 1 = CANCEL, 2 = MODIFY. This file is a harness-internal
-cache; it is not part of the engine ABI.
+`type` is 0 = NEW, 1 = CANCEL, 2 = MODIFY. The (scenario, seed, count) triple
+is encoded in the filename so the harness cannot silently reuse a stale
+workload when any of the three inputs change between runs. This file is a
+harness-internal cache; it is not part of the engine ABI.
 
 ## Report stream
 

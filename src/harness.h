@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-/* One workload message, decoded from a 40-byte orders_<scenario>.bin record. */
+/* One workload message, decoded from a 40-byte orders_*.bin record. */
 struct WorkloadMsg {
     uint8_t  type;          /* 0 = NEW, 1 = CANCEL, 2 = MODIFY */
     uint8_t  side;          /* 0 = buy, 1 = sell               */
@@ -21,7 +21,7 @@ struct WorkloadMsg {
     int64_t  price_ticks;
 };
 
-/* Load orders_<scenario>.bin. Returns false on a missing/corrupt file. */
+/* Load an orders_*.bin workload file. Returns false on a missing/corrupt file. */
 bool load_workload(const std::string& path, std::vector<WorkloadMsg>& out);
 
 /* ---- one loaded engine .so, with its ABI symbols bound -------------------*/

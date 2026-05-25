@@ -331,7 +331,14 @@ int main(int argc, char** argv) {
     }
 
     // --- ensure the workload exists -----------------------------------------
-    std::string workload_path = "orders_" + scenario + ".bin";
+    // The cache key is (scenario, seed, count) — the three inputs the generator
+    // consumes. Putting all three in the filename keeps a per-invocation cache
+    // hit for repeated runs of the same workload (e.g. 10 perf runs of one
+    // challenge) without ever silently reusing a stale workload when --seed or
+    // --count changes between runs.
+    std::string workload_path = "orders_" + scenario +
+                                "_seed" + std::to_string(seed) +
+                                "_count" + std::to_string(count) + ".bin";
     if (!file_exists(workload_path)) {
         std::string cmd = "./generator " + scenario + " " + workload_path + " " +
                           std::to_string(count) + " " + std::to_string(seed);
