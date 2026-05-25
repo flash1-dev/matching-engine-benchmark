@@ -266,6 +266,6 @@ verified against that file before use.
 
 **Reference engines.**
 - [liquibook] Liquibook. OCI / Object Computing.
-- [quantcupPTME] QuantCup Price-Time Matching Engine, 2010 contest sponsored by
+- [quantcupPTME] QuantCup Price-Time Matching Engine, 2011 contest sponsored by
   Tower Research Capital.
 - [exchangecore] Exchange-core open-source matching engine.
