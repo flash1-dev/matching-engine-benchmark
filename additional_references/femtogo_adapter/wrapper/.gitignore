@@ -1,0 +1,4 @@
+# Engine sources copied in from the pinned femto_go checkout at build time.
+femto_*.go
+# cgo c-shared build artefacts.
+*.h

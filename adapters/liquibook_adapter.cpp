@@ -43,6 +43,8 @@ std::unordered_map<uint32_t, uint64_t> g_lb2ext;   // liquibook id    -> harness
 std::vector<LO*>                       g_all;      // every LO created, for cleanup
 std::vector<LO*>                       g_pre;      // pre-built new-order LOs (prebuild)
 size_t                                 g_pre_idx = 0;
+std::vector<LO*>                       g_pre_modify;   // pre-built modify-reinsert LOs (prebuild)
+size_t                                 g_pre_modify_idx = 0;
 
 const me_transport_t* g_transport = nullptr;       // harness report transport
 void*                 g_sink      = nullptr;
@@ -116,6 +118,8 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_orders.reserve(1u << 21);
     g_lb2ext.reserve(1u << 21);
     g_all.reserve(1u << 21);
+    g_pre.reserve(1u << 21);
+    g_pre_modify.reserve(1u << 21);
 }
 
 void engine_shutdown(void) {
@@ -133,11 +137,19 @@ void engine_flush(void) {}
 /* Pre-build hook: construct each new order's native SimpleOrder before the timed
  * window, so engine_on_new_order's measured work is the match alone. */
 void engine_prebuild(uint8_t msg_type, const void* msg) {
-    if (msg_type != 0) return;
-    const new_order_t* o = static_cast<const new_order_t*>(msg);
-    lb::OrderConditions cond = o->ioc ? lb::oc_immediate_or_cancel
-                                      : lb::oc_no_conditions;
-    g_pre.push_back(make_order(o->side == 0, o->price_ticks, o->quantity, cond));
+    if (msg_type == 0) {
+        const new_order_t* o = static_cast<const new_order_t*>(msg);
+        lb::OrderConditions cond = o->ioc ? lb::oc_immediate_or_cancel
+                                          : lb::oc_no_conditions;
+        g_pre.push_back(make_order(o->side == 0, o->price_ticks, o->quantity, cond));
+    } else if (msg_type == 2) {
+        /* Modify is cancel + reinsert: pre-build the reinsert SimpleOrder here so
+         * engine_on_modify's measured work is the match alone, not the alloc.
+         * Exactly one entry per modify MESSAGE (consumed unconditionally below). */
+        const modify_t* m = static_cast<const modify_t*>(msg);
+        g_pre_modify.push_back(make_order(m->side == 0, m->new_price_ticks,
+                                          m->new_quantity, lb::oc_no_conditions));
+    }
 }
 
 void engine_on_new_order(const new_order_t* o) {
@@ -175,13 +187,17 @@ void engine_on_cancel(const cancel_t* c) {
 void engine_on_modify(const modify_t* m) {
     g_seq    = m->sequence_number;
     g_filled = 0;
+    /* Consume the reinsert SimpleOrder pre-built by engine_prebuild. Advance the
+     * index UNCONDITIONALLY — exactly one entry was built per modify message, so
+     * both the reinsert and the reject branch must step it or later modifies
+     * desync. (The unused order on the reject path is still tracked in g_all and
+     * freed at shutdown.) */
+    LO* lo = g_pre_modify[g_pre_modify_idx++];
     auto it = g_orders.find(m->order_id);
     if (it != g_orders.end() && resting(it->second)) {
         /* Cancel + reinsert at the new price/quantity (loses queue priority —
          * the production rule for a reprice or a quantity increase). */
         g_book->cancel(it->second);
-        LO* lo = make_order(m->side == 0, m->new_price_ticks, m->new_quantity,
-                            lb::oc_no_conditions);
         g_orders[m->order_id]   = lo;
         g_lb2ext[lo->order_id_] = m->order_id;
         g_book->add(lo, lb::oc_no_conditions);   // crossing fills -> Trade reports

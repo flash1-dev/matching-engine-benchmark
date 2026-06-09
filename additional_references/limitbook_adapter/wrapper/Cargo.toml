@@ -1,0 +1,24 @@
+[package]
+name = "limitbook_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols.
+[lib]
+name = "limitbook_adapter"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Pinned by ME_LIMITBOOK_SRC / build.sh — path is filled in at build time.
+limitbook = { path = "../../../third_party/limitbook" }
+# limitbook's public API is in rust_decimal::Decimal; we construct/inspect
+# prices through the same crate version the engine pins (1.37.x).
+rust_decimal = "1.37"
+
+# No [profile.release] overrides. House rule for Rust adapters: plain
+# `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
+# build.sh), and nothing more unless the ENGINE's own Cargo.toml prescribes
+# it. limitbook/Cargo.toml declares no [profile.release], so neither do we.

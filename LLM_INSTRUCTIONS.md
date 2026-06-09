@@ -460,8 +460,7 @@ useful, omit otherwise:
 - **`engine_get_transport(void)`** — return the engine's own SPSC transport
   vtable (`create / push / drain / flush / destroy`) instead of accepting
   the harness default (`boost::lockfree::spsc_queue`). Useful when the
-  engine already emits into its own ring (e.g. a cache-line-padded, batched-
-  write queue) and you want the harness's drainer to consume from that
+  engine already emits into its own lock-free ring and you want the harness's drainer to consume from that
   directly. If the symbol isn't exported, the harness uses its default and
   hands the vtable + handle to `engine_init`.
 

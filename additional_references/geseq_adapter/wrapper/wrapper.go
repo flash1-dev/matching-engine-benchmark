@@ -118,7 +118,7 @@ var (
 
 	// Shadow state. The reject path / side+price echo / audit queries all
 	// read from here. Single-threaded matcher, so no mutex needed.
-	gShadow map[uint64]*shadowEntry
+	gShadow map[uint64]shadowEntry
 
 	// Per-call context PutTrade reads.
 	gCurSeq    uint64
@@ -246,6 +246,7 @@ func (h *harnessHandler) PutTrade(makerID, takerID uint64,
 		if e.remaining == 0 {
 			e.alive = false
 		}
+		gShadow[makerID] = e
 	}
 }
 
@@ -260,7 +261,7 @@ func engine_init(seed C.uint64_t, transport *C.me_transport_t,
 	gTransport = transport
 	gSink = report_sink
 	gTok = 0
-	gShadow = make(map[uint64]*shadowEntry, 1<<21)
+	gShadow = make(map[uint64]shadowEntry, 1<<21)
 
 	h := &harnessHandler{}
 	gBook = ob.NewOrderBook(h,
@@ -334,7 +335,7 @@ func engine_on_new_order(o *C.new_order_t) {
 	if filled < qty {
 		residual = qty - filled
 	}
-	gShadow[oid] = &shadowEntry{
+	gShadow[oid] = shadowEntry{
 		price:     price,
 		side:      side,
 		remaining: residual,
@@ -359,6 +360,7 @@ func engine_on_cancel(c *C.cancel_t) {
 	emitAck(C.uint8_t(C.ME_CANCEL_ACK), seq, oid,
 		e.side, e.price, e.remaining)
 	e.alive = false
+	gShadow[oid] = e
 }
 
 //export engine_on_modify
@@ -401,7 +403,7 @@ func engine_on_modify(m *C.modify_t) {
 	if filled < newQty {
 		residual = newQty - filled
 	}
-	gShadow[oid] = &shadowEntry{
+	gShadow[oid] = shadowEntry{
 		price:     newPrice,
 		side:      side,
 		remaining: residual,

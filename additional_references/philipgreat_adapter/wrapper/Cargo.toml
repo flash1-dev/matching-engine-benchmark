@@ -1,0 +1,29 @@
+[package]
+name = "philipgreat_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols.
+[lib]
+name = "philipgreat_adapter"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# philipgreat/lighting-match-engine-core. The upstream is a *binary* crate
+# (src/main.rs, no library target), so build.sh patches in a one-line
+# src/lib.rs that re-exports the engine modules; this path dep then links
+# against that generated library target. Path is filled in / overridden by
+# build.sh (ME_PHILIPGREAT_SRC). Pinned SHA in the README + build.sh.
+lighting-match-engine-core = { path = "../../../third_party/lighting-match-engine-core" }
+
+# NOTE on build flags (house rule): we add NO profile overrides of our own.
+# The upstream Cargo.toml declares opt-level=3 / lto=fat / codegen-units=1 /
+# panic=abort only via per-target `rustflags`, which Cargo does not honour
+# from a package manifest (that key belongs in .cargo/config.toml), so the
+# engine ships no effective `[profile.release]`. We therefore build with the
+# default release profile plus RUSTFLAGS="-C target-cpu=native" (set in
+# build.sh) and nothing else, exactly mirroring the orderbookrs Rust adapter
+# convention of giving each engine only what its authors actually prescribed.

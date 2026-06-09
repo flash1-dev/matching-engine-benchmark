@@ -75,15 +75,15 @@ single drainer on adjacent cores, Graviton4 / Neoverse-V2,
 
 | Engine          | static    | normal    | swing-25  | swing-40  | flash-crash |
 |-----------------|----------:|----------:|----------:|----------:|------------:|
-| Liquibook       | infeasible | 4.70 M/s | 4.75 M/s  | 4.73 M/s  | 4.75 M/s    |
+| Liquibook       | infeasible | 4.67 M/s | 4.77 M/s  | 4.76 M/s  | 4.73 M/s    |
 | QuantCup        | 6.99 M/s  | 3.72 M/s  | 0.70 M/s  | 0.47 M/s  | 0.35 M/s    |
-| Exchange-core   | 1.23 M/s  | 1.69 M/s  | 1.72 M/s  | 1.72 M/s  | 1.76 M/s    |
-| **FlashOne**    | **29.43 M/s** | **30.15 M/s** | **30.23 M/s** | **29.96 M/s** | **30.22 M/s** |
+| Exchange-core   | 1.37 M/s  | 1.89 M/s  | 1.82 M/s  | 1.91 M/s  | 1.90 M/s    |
+| **FlashOne**    | **30.16 M/s** | **30.68 M/s** | **31.26 M/s** | **31.18 M/s** | **31.34 M/s** |
 
 FlashOne is the harness publisher's production engine — included as a
 published reference; its `.so` is not publicly available, so the row is
 reproducible only under a production license. See `discoveries.md` for
-per-engine architecture notes, observations from eight further surveyed
+per-engine architecture notes, observations from eleven further surveyed
 engines, and how to interpret each row.
 
 Measure on your own platform:
@@ -92,6 +92,42 @@ Measure on your own platform:
 scripts/build_baselines.sh all
 scripts/run_challenge.py --compare liquibook quantcup exchange_core --all-scenarios
 ```
+
+### Surveyed engines vs. their published figures
+
+Beyond the three calibration baselines, the harness has been run against the
+eleven third-party engines in `additional_references/` — each selected for
+>100 GitHub stars, a published >10 M orders/sec claim, or wide use as a
+teaching reference, and wrapped by a worked adapter. The figure each project
+publishes was measured under its own workload and its own definition of an
+operation — typically a single-threaded, in-process, single-symbol
+micro-benchmark with no cancels or modifies and no inter-thread report drain.
+The harness column is the same engine under one realistic workload: ~95% cancel
+/ 15% IOC, a GBM mid-price walk, and every report drained to a separate core.
+The two are **not** like-for-like; the table records both so the difference is
+visible (per-engine conditions and correctness findings are in
+`discoveries.md`).
+
+| Engine       | Harness `normal` (full report drainage) | Project's published figure |
+|--------------|----------------------------------------:|---------------------------:|
+| piyush       | 2.33 M/s                                | ~160 M/s                   |
+| philipgreat  | 5.22 M/s                                | ~125 M/s ("8 ns/order")    |
+| limitbook    | 2.34 M/s (INVALID)                      | ~30 M/s                    |
+| robaho       | 3.70 M/s                                | 10–22 M/s                  |
+| geseq        | infeasible (>540 s/trial)               | 12.5–21 M/s                |
+| mansoor      | ≤0.03 M/s                               | >20 M/s                    |
+| jxm35        | 1.86 M/s                                | 14 M/s                     |
+| femto_go     | 0.006 M/s (~350 s/trial)                | >10 M/s                    |
+| CppTrader    | 5.36 M/s                                | ~3.2 M/s                   |
+| OrderBook-rs | 0.79 M/s (INVALID)                      | latency-focused            |
+| Tzadiko      | infeasible                              | not headlined              |
+
+Every engine that advertises a double-digit-million-per-second (or higher)
+figure lands in low single digits of M/s — or does not complete — once reports
+cross a thread boundary under a cancel-heavy, multi-price workload; FlashOne
+sustains ~31 M/s on that same workload (above). Two engines (limitbook,
+OrderBook-rs) also diverge from the byte-identical correctness consensus on
+`normal`; see `discoveries.md` for the specific findings.
 
 ## How it works
 
@@ -118,13 +154,13 @@ api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
 src/                    the harness — runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  eight worked adapter examples for third-party engines (C++, Rust, Go)
+additional_references/  eleven worked adapter examples for third-party engines (C++, Rust, Go)
 patches/                source patches applied to baseline engines (QuantCup)
 reference/              the published canonical report output and its hash
 scripts/                build_baselines.sh, run_challenge.py, compare_results.py
 docs/                   METHODOLOGY, INTEGRATION, ANTI_CHEAT, PATCHES
 tests/                  a SHA-256 self-test and the anti-cheat cheat adapter
-discoveries.md          observations the harness produced against the eight surveyed engines
+discoveries.md          observations the harness produced against the eleven surveyed engines
 ```
 
 ## Requirements

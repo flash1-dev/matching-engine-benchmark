@@ -163,6 +163,10 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_transport = transport;
     g_sink      = report_sink;
 
+    /* Size the shadow map up front so its operator[] inserts never rehash
+     * (heap-realloc) inside the timed window as the order population grows. */
+    g_shadow.reserve(1u << 21);
+
     /* Load libjvm with RTLD_NODELETE so its lifetime is decoupled from this
      * .so: the harness's dlclose() at the end then cannot unload a live JVM. */
     const char* jvm_lib = std::getenv("ME_JVM_LIB");

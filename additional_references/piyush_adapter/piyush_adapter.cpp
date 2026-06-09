@@ -52,6 +52,12 @@ struct Shadow {
 };
 std::unordered_map<uint64_t, Shadow> g_shadow;
 
+// Reused trades buffer: avoids a per-message heap malloc+free that a fresh
+// local std::vector would incur on the timed hot path. Reserved once in
+// engine_init, cleared (not reallocated) at each match site. Mirrors the
+// reserved thread_local fills buffer in jxm35_adapter / robaho_adapter.
+std::vector<Trade> g_trades;
+
 inline void emit(const me_report_t& r) {
     while (!g_transport->push(g_sink, &r)) {
         // single-thread inline matching — transport push never fills, but a
@@ -109,6 +115,7 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport, void* sink)
     g_book      = new OrderBook();
     g_shadow.clear();
     g_shadow.reserve(1u << 21);   // ~2M entries headroom
+    g_trades.reserve(64);
 }
 
 void engine_shutdown(void) {
@@ -136,10 +143,9 @@ void engine_on_new_order(const new_order_t* o) {
     order.quantity      = o->quantity;
     order.active        = true;
 
-    std::vector<Trade> trades;
-    trades.reserve(16);
-    g_strategy.match(*g_book, order, trades);
-    uint64_t filled = flush_trades(trades, o->sequence_number);
+    g_trades.clear();
+    g_strategy.match(*g_book, order, g_trades);
+    uint64_t filled = flush_trades(g_trades, o->sequence_number);
 
     const uint32_t residual = (filled < o->quantity)
                                   ? static_cast<uint32_t>(o->quantity - filled)
@@ -202,10 +208,9 @@ void engine_on_modify(const modify_t* m) {
     order.quantity      = m->new_quantity;
     order.active        = true;
 
-    std::vector<Trade> trades;
-    trades.reserve(16);
-    g_strategy.match(*g_book, order, trades);
-    const uint64_t filled = flush_trades(trades, m->sequence_number);
+    g_trades.clear();
+    g_strategy.match(*g_book, order, g_trades);
+    const uint64_t filled = flush_trades(g_trades, m->sequence_number);
     const uint32_t residual = (filled < m->new_quantity)
                                   ? static_cast<uint32_t>(m->new_quantity - filled)
                                   : 0u;

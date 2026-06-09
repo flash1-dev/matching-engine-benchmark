@@ -10,4 +10,4 @@ require (
 require golang.org/x/sys v0.26.0 // indirect
 
 // build.sh rewrites this line to point at the pinned third_party checkout.
-replace github.com/geseq/orderbook => /home/ubuntu/workspaces/matching-engine-benchmark/third_party/geseq_orderbook
+replace github.com/geseq/orderbook => ../../../third_party/geseq_orderbook
