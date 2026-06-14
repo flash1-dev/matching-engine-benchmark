@@ -7,8 +7,9 @@
  *   - hooks the logger so each log_fill becomes a Trade report
  *   - synthesises OrderAck / CancelAck / ModifyAck / CancelReject / ModifyReject
  *     (the engine emits none of these to the harness's wire format)
- *   - maintains a shadow {oid -> {price, side, remaining, alive}} to drive the
- *     reject path and to echo side/price in CancelAck/ModifyAck.
+ *   - keeps a flat payload-echo vector {oid -> {price, side}} for the
+ *     CancelAck only; the reject decision is the engine's own (cancel()'s
+ *     bool, modify()'s {0,0} not-found result).
  *
  * IOC: NewOrder.flags |= IOC delegated to the engine; the residual is detected
  * via ExecResult.filled and emitted as a CancelAck for the unfilled remainder.
@@ -20,18 +21,19 @@
 #include "lob/logging.hpp"
 #include "lob/types.hpp"
 
+#include <algorithm>
 #include <cstdint>
-#include <cstring>
-#include <unordered_map>
 #include <limits>
 #include <memory>
+#include <vector>
 
 namespace {
 
 using namespace lob;
 
-// 16-bit price index space is ample for the workload's 26,920–64,843 range and
-// keeps the PriceLevelsContig footprint reasonable. Configure with margin.
+// A 100,001-slot contiguous price band covers the canonical workloads'
+// 10,494–42,817 tick envelope with generous margin while keeping the
+// PriceLevelsContig footprint reasonable.
 constexpr Tick MIN_TICK  = 0;
 constexpr Tick MAX_TICK  = 100000;
 constexpr Tick TICK_SIZE = 1;
@@ -41,21 +43,31 @@ void*                 g_sink      = nullptr;
 
 std::unique_ptr<PriceLevelsContig> g_bids;
 std::unique_ptr<PriceLevelsContig> g_asks;
-std::unique_ptr<BookCore>        g_book;
+std::unique_ptr<BookCore>          g_book;
 
+/* PAYLOAD ECHO ONLY — {price, side} for the CancelAck, a real engine gap:
+ * BookCore::cancel(id) returns a bare bool and log_cancel carries only
+ * (id, ts). The reject DECISION is always the engine's: cancel(id)'s bool
+ * and modify()'s {0,0} not-found result adjudicate every cancel/modify (the
+ * engine's id index erases filled makers at fill time, so they answer
+ * correctly for every lifecycle state). Harness ids are dense and 1-based,
+ * so a flat vector indexed by order_id holds the echo with no per-insert
+ * allocation on the timed path. */
 struct Shadow {
     int64_t  price;
     uint8_t  side;       // 0 = buy, 1 = sell
-    uint32_t remaining;
-    bool     alive;
 };
-std::unordered_map<uint64_t, Shadow> g_shadow;
+std::vector<Shadow> g_shadow;
+
+/* Bounds-checked flat-vector lookup. */
+inline Shadow* find_order(uint64_t ext_id) {
+    return ext_id < g_shadow.size() ? &g_shadow[ext_id] : nullptr;
+}
 
 // Per-call context: the harness message's seq, propagated into the engine's
 // log_fill callback so Trade reports carry the originating message's seq.
+// (The taker id itself arrives in the callback from the engine.)
 uint64_t g_cur_seq    = 0;
-uint64_t g_cur_taker  = 0;
-uint8_t  g_cur_takerSide = 0;
 
 inline void emit(const me_report_t& r) {
     while (!g_transport->push(g_sink, &r)) { /* spin */ }
@@ -90,13 +102,9 @@ public:
         r.maker_order_id  = static_cast<uint64_t>(passive_id);
         r.taker_order_id  = static_cast<uint64_t>(taker_id);
         emit(r);
-        if (auto it = g_shadow.find(passive_id); it != g_shadow.end()) {
-            if (it->second.remaining >= (uint32_t)qty)
-                it->second.remaining -= (uint32_t)qty;
-            else
-                it->second.remaining = 0;
-            if (it->second.remaining == 0) it->second.alive = false;
-        }
+        // No maker bookkeeping: the engine erases fully-filled makers from
+        // its own id index at fill time, so a later cancel/modify of one
+        // rejects through the engine's bool/{0,0} answer.
     }
 };
 
@@ -114,8 +122,20 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport, void* sink)
     g_asks   = std::make_unique<PriceLevelsContig>(band);
     g_logger = std::make_unique<HarnessLogger>();
     g_book   = std::make_unique<BookCore>(*g_bids, *g_asks, g_logger.get());
+    /* resize (not reserve): zero-fills the slots (all fields zero) and faults
+     * the pages in, both untimed. engine_prebuild grows past this if needed. */
     g_shadow.clear();
-    g_shadow.reserve(1u << 21);
+    g_shadow.resize(1u << 21);
+}
+
+/* Pre-build hook: only used to size the flat shadow vector to the workload's
+ * id range, outside the timed window. */
+void engine_prebuild(uint8_t msg_type, const void* msg) {
+    if (msg_type != 0) return;
+    const new_order_t* o = static_cast<const new_order_t*>(msg);
+    if (o->order_id >= g_shadow.size())
+        g_shadow.resize(std::max<size_t>(g_shadow.size() * 2,
+                                         static_cast<size_t>(o->order_id) + 1));
 }
 
 void engine_shutdown(void) {
@@ -132,95 +152,82 @@ void engine_on_new_order(const new_order_t* o) {
     emit_ack(ME_ORDER_ACK, o->sequence_number, o->order_id,
              o->side, o->price_ticks, o->quantity);
 
-    g_cur_seq       = o->sequence_number;
-    g_cur_taker     = o->order_id;
-    g_cur_takerSide = o->side;
+    g_cur_seq = o->sequence_number;
 
     NewOrder no{};
     no.seq   = o->sequence_number;
     no.ts    = 0;
     no.id    = o->order_id;
-    no.user  = o->order_id;
+    no.user  = o->order_id;   // uid is inert here: the STP flag is never set
     no.side  = (o->side == 0) ? Side::Bid : Side::Ask;
     no.price = static_cast<Tick>(o->price_ticks);
     no.qty   = static_cast<Quantity>(o->quantity);
     no.flags = (o->ioc ? IOC : NONE);
 
     ExecResult r = g_book->submit_limit(no);
-    const uint32_t residual = (r.filled < (Quantity)o->quantity)
-                                  ? static_cast<uint32_t>(o->quantity - r.filled)
-                                  : 0u;
 
     if (o->ioc) {
+        // Native IOC: the engine reports the residual in ExecResult and
+        // never rests it.
+        const uint32_t residual =
+            (r.filled < static_cast<Quantity>(o->quantity))
+                ? static_cast<uint32_t>(o->quantity - r.filled)
+                : 0u;
         if (residual > 0)
             emit_ack(ME_CANCEL_ACK, o->sequence_number, o->order_id,
                      o->side, o->price_ticks, residual);
         return;
     }
 
-    // GTC: shadow tracks the resting remainder (zero => already fully filled,
-    // alive=false so a subsequent cancel/modify will reject).
-    g_shadow[o->order_id] = { o->price_ticks, o->side, residual, residual > 0 };
+    // GTC: shadow records {price, side} for the CancelAck echo. Liveness is
+    // the engine's to answer — its id index has no entry for a fully-filled
+    // order, so later cancels/modifies reject through the engine itself.
+    g_shadow[o->order_id] = { o->price_ticks, o->side };
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    auto it = g_shadow.find(c->order_id);
-    if (it == g_shadow.end() || !it->second.alive) {
+    // The engine adjudicates: its id-keyed cancel(id) returns true iff the
+    // order was resting (never seen, already cancelled and filled-away ids
+    // all return false, with no side effects). The shadow only supplies the
+    // side/price echo the bool cannot.
+    if (!g_book->cancel(c->order_id)) {
         emit_ack(ME_CANCEL_REJECT, c->sequence_number, c->order_id, 0, 0, 0);
         return;
     }
-    const Shadow s = it->second;
-    bool ok = g_book->cancel(c->order_id);
-    if (!ok) {
-        // Shadow disagreed with the engine — treat as not-resting and reject.
-        emit_ack(ME_CANCEL_REJECT, c->sequence_number, c->order_id, 0, 0, 0);
-        it->second.alive = false;
-        return;
-    }
-    emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
-             s.side, s.price, s.remaining);
-    it->second.alive = false;
+    Shadow* s = find_order(c->order_id);   // defensive null: unreachable —
+    emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,   // engine-resting
+             s ? s->side : 0, s ? s->price : 0, 0);            // => slot recorded
 }
 
 void engine_on_modify(const modify_t* m) {
-    auto it = g_shadow.find(m->order_id);
-    if (it == g_shadow.end() || !it->second.alive) {
+    // mansoor's native modify() IS the harness contract: it erases the order,
+    // matches any cross at the new price (fills emitted through log_fill,
+    // stamped with this message's seq), and re-enqueues the remainder at the
+    // TAIL of the new level — queue priority lost. The engine adjudicates:
+    // ExecResult{0,0} is its not-found signal (the workload guarantees
+    // new_qty > 0), returned with no side effects. The canonical stream
+    // stable-sorts by (seq, type), so trades emitted inside modify() followed
+    // by the ModifyAck hash identically to ack-first.
+    g_cur_seq = m->sequence_number;
+    ModifyOrder mo{};
+    mo.seq       = m->sequence_number;
+    mo.ts        = 0;
+    mo.id        = m->order_id;
+    mo.new_price = static_cast<Tick>(m->new_price_ticks);
+    mo.new_qty   = static_cast<Quantity>(m->new_quantity);
+    mo.flags     = NONE;
+    ExecResult r = g_book->modify(mo);
+    if (r.filled == 0 && r.remaining == 0) {
         emit_ack(ME_MODIFY_REJECT, m->sequence_number, m->order_id, 0, 0, 0);
         return;
     }
-    const uint8_t side = it->second.side;
-
-    // The harness's modify contract is cancel + reinsert (queue-priority lost),
-    // not the in-place-resize that mansoor's modify() implements. Do the cancel
-    // explicitly here and re-submit as a new order so the matching path is the
-    // same as any other crossing NEW — and the resulting trades carry the
-    // modify's seq.
-    if (!g_book->cancel(m->order_id)) {
-        emit_ack(ME_MODIFY_REJECT, m->sequence_number, m->order_id, 0, 0, 0);
-        it->second.alive = false;
-        return;
-    }
+    // The modify message itself carries the order's side (the ABI populates
+    // modify_t.side) — use the message-native field; the shadow slot only
+    // needs its price refreshed for a later CancelAck echo.
     emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
-             side, m->new_price_ticks, m->new_quantity);
-
-    g_cur_seq       = m->sequence_number;
-    g_cur_taker     = m->order_id;
-    g_cur_takerSide = side;
-
-    NewOrder no{};
-    no.seq   = m->sequence_number;
-    no.ts    = 0;
-    no.id    = m->order_id;
-    no.user  = m->order_id;
-    no.side  = (side == 0) ? Side::Bid : Side::Ask;
-    no.price = static_cast<Tick>(m->new_price_ticks);
-    no.qty   = static_cast<Quantity>(m->new_quantity);
-    no.flags = NONE;
-    ExecResult r = g_book->submit_limit(no);
-    const uint32_t residual = (r.filled < (Quantity)m->new_quantity)
-                                  ? static_cast<uint32_t>(m->new_quantity - r.filled)
-                                  : 0u;
-    it->second = { m->new_price_ticks, side, residual, residual > 0 };
+             m->side, m->new_price_ticks, m->new_quantity);
+    Shadow* s = find_order(m->order_id);   // defensive null: unreachable
+    if (s) *s = { m->new_price_ticks, m->side };
 }
 
 int64_t engine_query_best_bid(void) {

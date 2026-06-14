@@ -1,25 +1,34 @@
 /*
  * liquibook_adapter.cpp — matching_engine_api.h backed by Liquibook.
  *
- * Liquibook: https://github.com/ObjectComputing/liquibook  (tree-of-lists book).
- * Built as a shared library by scripts/build_baselines.sh. Every deviation from
- * Liquibook's upstream behaviour is documented in docs/PATCHES.md.
+ * Liquibook: https://github.com/ObjectComputing/liquibook  (price-keyed
+ * multimap book). Built as a shared library by scripts/build_baselines.sh.
+ * Every deviation from Liquibook's upstream behaviour is documented in
+ * docs/PATCHES.md.
  *
  * The adapter emits the report stream itself: an OrderAck per new order, a
  * Trade per fill (via Liquibook's OrderListener callback), a CancelAck per
- * cancel and per IOC residual, and a ModifyAck per modify — each pushed into
- * the harness report transport. Liquibook matches synchronously on the calling
- * thread, so engine_flush() is a no-op. Modify is handled as cancel + reinsert
- * (Liquibook's replace() corrupts SimpleOrder::price_; see docs/PATCHES.md).
+ * cancel and per IOC residual, a ModifyAck per modify, and a CancelReject /
+ * ModifyReject per cancel/modify of an order that is not resting — each
+ * pushed into the harness report transport. Liquibook matches synchronously
+ * on the calling thread, so engine_flush() is a no-op. Modify is handled as
+ * cancel + reinsert because that is the harness contract
+ * (api/matching_engine_api.h: every modify loses time priority); Liquibook's
+ * native replace() updates same-price quantity changes in place — keeping
+ * priority — so it implements different semantics and is not used.
  */
+// Documentary only: simple_order.h defines LIQUIBOOK_ORDER_KNOWS_CONDITIONS
+// itself before any consumer sees it, and the code it gates is the inert
+// constructor OR documented in docs/PATCHES.md. The IOC flag actually
+// travels through the explicit add() conditions argument below.
 #define LIQUIBOOK_ORDER_KNOWS_CONDITIONS
 #include <simple/simple_order.h>
 #include <simple/simple_order_book.h>
 
 #include "matching_engine_api.h"
 
+#include <algorithm>
 #include <cstdint>
-#include <unordered_map>
 #include <vector>
 
 #if defined(__aarch64__)
@@ -38,13 +47,23 @@ using LBook = liquibook::simple::SimpleOrderBook<5>;
 namespace lb = liquibook::book;
 
 LBook* g_book = nullptr;
-std::unordered_map<uint64_t, LO*>      g_orders;   // harness order_id -> current LO
-std::unordered_map<uint32_t, uint64_t> g_lb2ext;   // liquibook id    -> harness id
-std::vector<LO*>                       g_all;      // every LO created, for cleanup
-std::vector<LO*>                       g_pre;      // pre-built new-order LOs (prebuild)
-size_t                                 g_pre_idx = 0;
-std::vector<LO*>                       g_pre_modify;   // pre-built modify-reinsert LOs (prebuild)
-size_t                                 g_pre_modify_idx = 0;
+/* Harness order ids are dense and 1-based (a permutation of 1..N_new), so a
+ * flat vector indexed by order_id replaces a hash map: lookup is a bounds
+ * check + load (nullptr = never seen / vector slot never written). The slots
+ * are SIZED in engine_init / engine_prebuild (capacity only, untimed — the
+ * static-allocation parity every fixed-array engine gets), but every per-order
+ * WRITE happens on the clock in engine_on_*. The id->LO* mapping is NECESSARY:
+ * Liquibook cancels by order POINTER and keeps no id index of its own. */
+std::vector<LO*>      g_orders;     // harness order_id -> current LO
+/* Reverse map for trade-report labeling. Liquibook assigns order_id_ =
+ * ++last_order_id_ when the SimpleOrder is CONSTRUCTED; construction now
+ * happens on the clock (engine_on_*), so this mapping is written there too —
+ * engine_prebuild only pre-sizes the table's capacity (g_lb_built). */
+std::vector<uint64_t> g_lb2ext;     // liquibook order_id_ -> harness id
+std::vector<LO*>      g_all;        // every LO created, for cleanup
+size_t                g_lb_built = 0;   // SimpleOrders the timed loop will build
+                                        // (news + modifies, an upper bound);
+                                        // pre-sizes g_lb2ext in engine_prebuild
 
 const me_transport_t* g_transport = nullptr;       // harness report transport
 void*                 g_sink      = nullptr;
@@ -56,7 +75,8 @@ void push_report(const me_report_t& r) {
     while (!g_transport->push(g_sink, &r)) cpu_pause();
 }
 
-/* Emit a non-trade report (OrderAck / CancelAck / ModifyAck). */
+/* Emit a non-trade report (OrderAck / CancelAck / ModifyAck / CancelReject /
+ * ModifyReject). */
 void emit_ack(uint8_t type, uint64_t seq, uint64_t order_id,
               uint8_t side, int64_t price, uint32_t qty) {
     me_report_t r{};
@@ -80,6 +100,9 @@ public:
         r.sequence_number = g_seq;
         r.price_ticks     = static_cast<int64_t>(price);   // maker's resting price
         r.quantity        = static_cast<uint32_t>(qty);
+        // Indexed loads into the reverse map, written on the clock when each
+        // SimpleOrder was constructed (engine_on_*); only its capacity is
+        // pre-sized.
         r.maker_order_id  = g_lb2ext[maker->order_id_];
         r.taker_order_id  = g_lb2ext[taker->order_id_];
         push_report(r);
@@ -98,11 +121,24 @@ inline bool resting(LO* lo) {
               && lo->open_qty() > 0;
 }
 
+/* Bounds-checked flat-vector lookup: nullptr = not seen (slot never written
+ * or id past the populated range) — the same outcomes a map miss produced. */
+inline LO* find_order(uint64_t ext_id) {
+    return ext_id < g_orders.size() ? g_orders[ext_id] : nullptr;
+}
+
 LO* make_order(bool is_buy, int64_t price, uint32_t qty, lb::OrderConditions cond) {
     LO* lo = new LO(is_buy, static_cast<lb::Price>(price),
                     static_cast<lb::Quantity>(qty), 0, cond);
     g_all.push_back(lo);
     return lo;
+}
+
+/* Record lo's liquibook-id -> harness-id pair. Called on the clock as each
+ * order is built; the slot was pre-sized in engine_prebuild (g_lb_built bounds
+ * order_id_), so this is a plain indexed store with no capacity check. */
+inline void map_lb_id(LO* lo, uint64_t ext_id) {
+    g_lb2ext[lo->order_id_] = ext_id;
 }
 
 }  // namespace
@@ -115,11 +151,12 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_sink      = report_sink;
     g_book = new LBook();
     g_book->set_order_listener(&g_listener);
-    g_orders.reserve(1u << 21);
-    g_lb2ext.reserve(1u << 21);
+    /* resize (not reserve): zero-fills the slots and faults the pages in,
+     * both outside the timed window. engine_prebuild grows past this if a
+     * workload ever uses ids beyond 2M. */
+    g_orders.resize(1u << 21, nullptr);
+    g_lb2ext.resize(1u << 21, 0);
     g_all.reserve(1u << 21);
-    g_pre.reserve(1u << 21);
-    g_pre_modify.reserve(1u << 21);
 }
 
 void engine_shutdown(void) {
@@ -127,6 +164,7 @@ void engine_shutdown(void) {
     g_all.clear();
     g_orders.clear();
     g_lb2ext.clear();
+    g_lb_built = 0;
     delete g_book;
     g_book = nullptr;
 }
@@ -134,22 +172,25 @@ void engine_shutdown(void) {
 /* Liquibook matches synchronously on the calling thread — nothing is pending. */
 void engine_flush(void) {}
 
-/* Pre-build hook: construct each new order's native SimpleOrder before the timed
- * window, so engine_on_new_order's measured work is the match alone. */
+/* Pre-build hook: capacity pre-sizing ONLY (untimed) — the static-allocation
+ * parity a fixed-capacity engine gets at init. NOTHING per-order is built here:
+ * the SimpleOrder, both its id mappings, and the book insert all happen on the
+ * clock in engine_on_*, as the prebuild contract requires (prebuild may only
+ * translate + pre-size capacity; node alloc + id registration stay timed). One SimpleOrder is
+ * constructed per new and per modify (Liquibook sets order_id_ = ++last_order_id_
+ * at construction), so g_lb_built upper-bounds order_id_ and pre-sizes the
+ * reverse table; a cancel constructs nothing. */
 void engine_prebuild(uint8_t msg_type, const void* msg) {
+    if (msg_type == 1) return;                         // a cancel builds no order
     if (msg_type == 0) {
         const new_order_t* o = static_cast<const new_order_t*>(msg);
-        lb::OrderConditions cond = o->ioc ? lb::oc_immediate_or_cancel
-                                          : lb::oc_no_conditions;
-        g_pre.push_back(make_order(o->side == 0, o->price_ticks, o->quantity, cond));
-    } else if (msg_type == 2) {
-        /* Modify is cancel + reinsert: pre-build the reinsert SimpleOrder here so
-         * engine_on_modify's measured work is the match alone, not the alloc.
-         * Exactly one entry per modify MESSAGE (consumed unconditionally below). */
-        const modify_t* m = static_cast<const modify_t*>(msg);
-        g_pre_modify.push_back(make_order(m->side == 0, m->new_price_ticks,
-                                          m->new_quantity, lb::oc_no_conditions));
+        if (o->order_id >= g_orders.size())
+            g_orders.resize(std::max<size_t>(g_orders.size() * 2,
+                                             static_cast<size_t>(o->order_id) + 1),
+                            nullptr);
     }
+    if (++g_lb_built >= g_lb2ext.size())
+        g_lb2ext.resize(std::max<size_t>(g_lb2ext.size() * 2, g_lb_built + 1), 0);
 }
 
 void engine_on_new_order(const new_order_t* o) {
@@ -160,9 +201,12 @@ void engine_on_new_order(const new_order_t* o) {
 
     lb::OrderConditions cond = o->ioc ? lb::oc_immediate_or_cancel
                                       : lb::oc_no_conditions;
-    LO* lo = g_pre[g_pre_idx++];   // native SimpleOrder built by engine_prebuild
-    g_orders[o->order_id]   = lo;
-    g_lb2ext[lo->order_id_] = o->order_id;
+    // Native-object construction (alloc + Liquibook id) and BOTH id-map writes
+    // are on the clock — the gateway only translated the wire message; the
+    // matcher builds, indexes, and inserts the order.
+    LO* lo = make_order(o->side == 0, o->price_ticks, o->quantity, cond);
+    map_lb_id(lo, o->order_id);    // reverse map (for fill labeling)
+    g_orders[o->order_id] = lo;    // forward map; slot pre-sized in prebuild
     g_book->add(lo, cond);   // fills delivered as Trade reports via Listener::on_fill
 
     if (o->ioc && g_filled < o->quantity)            // IOC residual cancellation
@@ -171,9 +215,8 @@ void engine_on_new_order(const new_order_t* o) {
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    auto it = g_orders.find(c->order_id);
-    if (it != g_orders.end() && resting(it->second)) {
-        LO* lo = it->second;
+    LO* lo = find_order(c->order_id);
+    if (resting(lo)) {
         g_book->cancel(lo);
         emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
                  lo->is_buy() ? 0 : 1, static_cast<int64_t>(lo->price()), 0);
@@ -187,19 +230,16 @@ void engine_on_cancel(const cancel_t* c) {
 void engine_on_modify(const modify_t* m) {
     g_seq    = m->sequence_number;
     g_filled = 0;
-    /* Consume the reinsert SimpleOrder pre-built by engine_prebuild. Advance the
-     * index UNCONDITIONALLY — exactly one entry was built per modify message, so
-     * both the reinsert and the reject branch must step it or later modifies
-     * desync. (The unused order on the reject path is still tracked in g_all and
-     * freed at shutdown.) */
-    LO* lo = g_pre_modify[g_pre_modify_idx++];
-    auto it = g_orders.find(m->order_id);
-    if (it != g_orders.end() && resting(it->second)) {
+    LO* cur = find_order(m->order_id);
+    if (resting(cur)) {
         /* Cancel + reinsert at the new price/quantity (loses queue priority —
-         * the production rule for a reprice or a quantity increase). */
-        g_book->cancel(it->second);
-        g_orders[m->order_id]   = lo;
-        g_lb2ext[lo->order_id_] = m->order_id;
+         * the production rule for a reprice or a quantity increase). The
+         * reinsert order is built and indexed here, on the clock. */
+        g_book->cancel(cur);
+        LO* lo = make_order(m->side == 0, m->new_price_ticks,
+                            m->new_quantity, lb::oc_no_conditions);
+        map_lb_id(lo, m->order_id);
+        g_orders[m->order_id] = lo;   // overwrite: same slot
         g_book->add(lo, lb::oc_no_conditions);   // crossing fills -> Trade reports
         emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
                  m->side, m->new_price_ticks, m->new_quantity);
@@ -222,14 +262,18 @@ int64_t engine_query_best_ask(void) {
 }
 
 uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
+    /* Keyed multimap access (equal_range on ComparablePrice) instead of a
+     * full-side walk — the book's own index answers depth-at-price. */
     const lb::Price p = static_cast<lb::Price>(price_ticks);
     uint64_t total = 0;
     if (side == 0) {
-        for (const auto& kv : g_book->bids())
-            if (kv.first.price() == p) total += kv.second.open_qty();
+        auto range = g_book->bids().equal_range(lb::ComparablePrice(true, p));
+        for (auto it = range.first; it != range.second; ++it)
+            total += it->second.open_qty();
     } else {
-        for (const auto& kv : g_book->asks())
-            if (kv.first.price() == p) total += kv.second.open_qty();
+        auto range = g_book->asks().equal_range(lb::ComparablePrice(false, p));
+        for (auto it = range.first; it != range.second; ++it)
+            total += it->second.open_qty();
     }
     return total;
 }

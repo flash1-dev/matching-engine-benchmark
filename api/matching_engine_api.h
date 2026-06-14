@@ -243,6 +243,18 @@ const me_transport_t* engine_get_transport(void);
  * 0 = new, 1 = cancel, 2 = modify; msg points to the matching new_order_t /
  * cancel_t / modify_t. An engine that does not export this converts inside
  * engine_on_* as usual.
+ *
+ * CONSTRAINT — translation only. engine_prebuild may ONLY marshal a message
+ * into the engine's native order representation (and pre-size static capacity).
+ * It must NOT insert into the book, match, allocate the resting order node, or
+ * populate any id->handle map: that is matcher work and belongs in the timed
+ * engine_on_* calls. The harness enforces this two ways: right after the
+ * prebuild pass, before the clock starts, it asserts the book is empty
+ * (engine_query_best_bid() == INT64_MIN and engine_query_best_ask() ==
+ * INT64_MAX), catching pre-insertion; and it times the prebuild pass, flagging
+ * (and, when egregious, gating INVALID) a prebuild that rivals the timed run —
+ * the signature of matcher work hidden in a private shadow. See
+ * docs/ANTI_CHEAT.md.
  * ===========================================================================*/
 
 void engine_prebuild(uint8_t msg_type, const void* msg);

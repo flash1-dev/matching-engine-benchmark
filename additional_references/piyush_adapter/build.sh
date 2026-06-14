@@ -29,9 +29,7 @@ g++ -std=c++20 -O3 -march=native -fPIC -shared \
     -I"$SRC/src" -I"$REPO/api" \
     -o "$REPO/piyush_adapter.so" \
     piyush_adapter.cpp \
-    "$SRC/src/Exchange.cpp" \
     "$SRC/src/OrderBook.cpp" \
     "$SRC/src/Order.cpp" \
-    "$SRC/src/TcpServer.cpp" \
     -pthread
 echo "built: piyush_adapter.so"

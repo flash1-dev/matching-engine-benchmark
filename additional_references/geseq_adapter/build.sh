@@ -60,10 +60,11 @@ fi
 
 # Patch pricelevel.go in place. The shipped processLimitOrder matches the
 # best-price queue, then iterates pl.GetQueue() without re-checking the
-# price-cross predicate, so an aggressor that partially fills the best
-# level keeps consuming non-crossing levels too. Inject the predicate
-# check that the inner loop is missing. Idempotent — reset --hard above
-# restores the file before re-patching.
+# price-cross predicate, so an aggressor that exhausts the best level with
+# quantity left over keeps consuming non-crossing levels too. Inject the
+# predicate check that the inner loop is missing. Idempotent — the managed
+# clone is reset --hard above, and the marker check below makes re-running
+# a no-op on an already-patched tree (the ME_GESEQ_SRC path).
 PL="$SRC/pricelevel.go"
 python3 - "$PL" <<'PY'
 import pathlib, sys
@@ -100,9 +101,12 @@ WRAP="$DIR/wrapper"
 cd "$WRAP"
 
 # Make the wrapper module resolve geseq/orderbook to the pinned local checkout.
-# (Wrapper's go.mod has a `replace` directive that points at $SRC.)
+# (Wrapper's go.mod has a `replace` directive that points at $SRC.) Written as
+# a RELATIVE path so go.mod stays machine-independent — an absolute path here
+# would bake the build host's directory layout into a tracked file.
+SRC_REL="$(realpath --relative-to="$WRAP" "$SRC")"
 sed -i.bak \
-    "s|^replace github.com/geseq/orderbook =>.*|replace github.com/geseq/orderbook => ${SRC}|" \
+    "s|^replace github.com/geseq/orderbook =>.*|replace github.com/geseq/orderbook => ${SRC_REL}|" \
     go.mod
 rm -f go.mod.bak
 

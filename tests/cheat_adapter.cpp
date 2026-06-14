@@ -171,7 +171,7 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
 
     FILE* f = std::fopen("reference/canonical_output.txt", "rb");
     if (!f) return;
-    // The canonical normal+seed12345 stream is ~2.2M reports across ~2M
+    // The canonical normal+seed23 stream is ~2.2M reports across ~2M
     // unique seqs; reserve buckets up front so the load loop does not rehash.
     g_by_seq.reserve(1u << 21);
 
@@ -199,10 +199,15 @@ void engine_on_new_order(const new_order_t* o) { replay(o->sequence_number); }
 void engine_on_cancel   (const cancel_t*    c) { replay(c->sequence_number); }
 void engine_on_modify   (const modify_t*    m) { replay(m->sequence_number); }
 
-/* No order book exists — these answers are fabricated and cannot match a real
- * engine, so the audit run's random-point state audit fails. */
-int64_t  engine_query_best_bid(void)             { return 0; }
-int64_t  engine_query_best_ask(void)             { return 0; }
+/* No order book exists. The empty-book sentinels are correct BEFORE the timed
+ * window (the book really is empty until the first message), so this cheat
+ * passes the harness's pre-flight book-empty assert — that layer targets
+ * pre-insertion, not replay. But the engine never builds a book, so mid-run the
+ * same constant answers cannot match a real engine and the audit run's
+ * random-point state audit fails. That contrast is the point: a perf run alone
+ * is not enough; the audit run is what closes the gap. */
+int64_t  engine_query_best_bid(void)             { return INT64_MIN; }
+int64_t  engine_query_best_ask(void)             { return INT64_MAX; }
 uint64_t engine_query_depth_at(int64_t, uint8_t) { return 0; }
 
 }  // extern "C"

@@ -24,8 +24,8 @@ price. Native API visible to a driver:
   `EXECUTION_EVENT` per fill onto `outputRing`. No IoC / FoK flag.
 - `MatchingEngine.Cancel(orderID)` — cancel a resting order by the engine's
   id. Pushes `CANCEL_EVENT` on success, a generic `REJECT_EVENT` on failure.
-- No native modify (`README` "Updates will have to be handled with
-  Cancel+Create").
+- No native modify (the engine API is Limit/Cancel only; updates must be
+  handled as cancel + re-create).
 - Results are `OutputEvent`s on `outputRing`; `main.go`'s demo drains them on
   a separate goroutine via `StartOutputDistributor`.
 
@@ -44,9 +44,9 @@ Constraints that shape the adapter:
 - **Cgo `c-shared`**: a Go `package main` with `//export` directives is built
   with `go build -buildmode=c-shared` to produce `femtogo_adapter.so` with
   plain C symbols the harness's `dlopen` resolves directly. No C++ shim.
-- **Engine compiled in, not imported.** femto_go is `package main` with
-  unexported types (`Order`, `OrderBook`, `Side`, `Price`, …) and an
-  unexported `outputRing` field, so it cannot be imported as a library.
+- **Engine compiled in, not imported.** femto_go is `package main`, which
+  cannot be imported at all, and the fields the wrapper must reach
+  (`outputRing`, and the ring's `writePos`/`readPos`/`buffer`) are unexported.
   `build.sh` copies the pinned-SHA engine `.go` files (everything except
   `main.go` and `*_test.go`) into `wrapper/` as `femto_*.go` so they compile
   together as one package, giving the wrapper direct access to
@@ -77,8 +77,9 @@ Constraints that shape the adapter:
   outside `[1, 16383]` is treated as out of range and rejected the way the
   engine itself rejects an out-of-range price.
 - **Shadow map** `{harness_oid -> engine_oid, side, price, remaining, alive}`
-  is the source of truth for the reject path, the side/price echo the engine's
-  events drop, and the audit queries.
+  is the never-seen gate of the reject path (for known engine ids the engine
+  itself adjudicates: `CANCEL_EVENT` vs `REJECT_EVENT`), the side/price echo
+  the engine's events drop, and the audit queries.
 - **IoC**: the engine has no IoC flag, so the adapter submits the order GTC,
   sees how much filled (`qty − Σ fills`), and if a residual rests it issues an
   engine `Cancel` to pull it back out and emits the harness residual
@@ -92,9 +93,11 @@ Constraints that shape the adapter:
 
 Against `normal` the adapter is **VALID** — the report stream reproduces the
 canonical hash byte-for-byte (every report type: OrderAck, Trade, CancelAck,
-ModifyAck, CancelReject, ModifyReject, IoC-residual CancelAck). But the
-measured throughput **collapses to ~0.01 M msgs/s** (~175 µs/message; ~2M
-messages in ~350 s on shared cores).
+ModifyAck, CancelReject, ModifyReject, IoC-residual CancelAck), verified in
+an untimed audit run. But a single perf trial takes **minutes of wall clock
+for the ~2M messages** (>60 s = `infeasible` under the throughput protocol;
+roughly 0.002–0.006 M msgs/s, i.e. hundreds of microseconds per message,
+depending on co-running load).
 
 The README advertises **">10M orders/second, ~70 ns/order (Apple M1)"**. That
 figure is an *in-process* number: `main.go` drives the engine from one
@@ -106,11 +109,11 @@ drained on another core) through the C ABI. For a Go engine loaded via
 `dlopen`, that means each report is a cgo call out of the Go runtime made from
 the harness's foreign (C, pinned) matcher thread, and the per-order shadow
 bookkeeping churns the Go GC (the run spawns ~100 runtime threads, ~700 MB
-RSS). Micro-benchmarks isolate where the cost is NOT: the engine alone in the
-harness's narrow-band, 90%-cancel regime runs at ~40 M/s in pure Go, and even
-with the adapter's two shadow maps added it is still ~9 M/s — three to four
-orders of magnitude above the measured 0.01 M/s. The remaining, dominant cost
-is the cgo / cross-thread report-emission boundary the in-process "10M/s"
+RSS). Micro-benchmarks isolate where the cost is NOT: the engine alone under
+the harness's order mix runs at tens of M/s in pure Go, and even with the
+adapter's two shadow maps added it stays in the M/s range — three orders of
+magnitude above the measured throughput. The remaining, dominant cost is
+the cgo / cross-thread report-emission boundary the in-process "10M/s"
 number never pays. This is the same lesson the harness was built to surface:
 an engine whose benchmark reports through in-process callbacks hides the
 dominant inter-thread reporting cost.
@@ -120,9 +123,9 @@ dominant inter-thread reporting cost.
 ```bash
 bash additional_references/femtogo_adapter/build.sh
 ./harness --engine ./femtogo_adapter.so --scenario normal --mode perf \
-          --matcher-core 86 --drainer-core 87
+          --matcher-core 82 --drainer-core 83
 ./harness --engine ./femtogo_adapter.so --scenario normal --mode audit \
-          --matcher-core 86 --drainer-core 87
+          --matcher-core 82 --drainer-core 83
 ```
 
 `build.sh`:

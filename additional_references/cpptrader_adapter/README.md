@@ -9,7 +9,7 @@ Pinned commits:
 - `chronoxor/CppTrader`  — `831d10e2a6dd96ac7b063f1d418f6563cbf74c50`
 - `chronoxor/CppCommon`  — `e14011974b8d463cc854239bf351275b5a857de6`
 
-This adapter is one of five worked examples in `additional_references/` —
+This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `discoveries.md` at the
 repository root for the observations the harness produced against this
 snapshot.
@@ -61,10 +61,11 @@ adapter uses `WORKLD\0\0`).
   harness's "cancel + reinsert, losing queue priority" contract. Crossing
   fills flow through the same `onExecuteOrder` path and inherit the modify
   message's seq via the adapter's per-call context.
-- Shadow map (`oid -> {side, price, alive}`) drives the reject path and
-  echoes side on CancelAck/ModifyAck. Liveness is double-checked against
-  `g_manager->GetOrder()` so a "live in shadow but fully filled by an
-  earlier crossing" race rejects correctly.
+- No adapter-side order state. The engine's own id index is the single
+  source of truth: `g_manager->GetOrder(oid) != nullptr` ⟺ resting, and the
+  returned live order supplies the side/price/leaves-quantity echoed on
+  CancelAck/ModifyAck (read *before* `DeleteOrder`, which releases the node
+  back to the engine's pool). A `GetOrder` miss is the reject path.
 
 ## Build / run
 
@@ -80,3 +81,17 @@ The upstream uses a `gil` package manager to fetch CppCommon; we sidestep
 `gil` and clone CppCommon directly to the path the upstream CMake expects.
 Overrides: `ME_CPPTRADER_SRC` and `ME_CPPCOMMON_SRC` use existing
 checkouts in place of cloning.
+
+## Known engine issue (off the canonical path)
+
+On the canonical workload CppTrader is VALID on all five scenarios. During
+stress-testing with a deeper standing book we hit — and verified in a debug
+build — an engine-level defect worth knowing about: a modify that reprices
+one tick, crosses, and fills *completely* can leave its order node in the
+engine's id index with a null price-level pointer; a later cancel of that id
+then dereferences it in `OrderBook::DeleteOrder` and crashes. An adapter
+that hides the engine's id index behind its own liveness shadow masks the
+crash but trips CppCommon's pool leak assertion at teardown instead. The
+trigger is narrower than "any fully-filled crossing modify" (the canonical
+workload contains dozens and does not trip it); we did not pin the internal
+branch. Full mechanics and provenance in `discoveries.md`.

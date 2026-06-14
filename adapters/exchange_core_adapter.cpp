@@ -13,8 +13,9 @@
  * The adapter emits the report stream itself. HarnessExchangeCore writes the
  * trades from exchange-core's matcher-event chain into an adapter-owned staging
  * buffer; this adapter turns each into a Trade report and adds the OrderAck /
- * CancelAck / ModifyAck reports, pushing all of them into the harness report
- * transport. Modify is cancel + reinsert, performed inside the Java helper.
+ * CancelAck / ModifyAck (and CancelReject / ModifyReject) reports, pushing all
+ * of them into the harness report transport. Modify is cancel + reinsert,
+ * performed inside the Java helper.
  *
  * Threading: every engine_* call runs on the harness matcher thread — the same
  * thread that creates the JVM — so one cached JNIEnv is valid throughout.
@@ -32,8 +33,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <unordered_map>
-#include <utility>
 
 #if defined(__aarch64__)
 static inline void cpu_pause() { asm volatile("yield" ::: "memory"); }
@@ -61,15 +60,12 @@ jmethodID m_onNew, m_onCancel, m_onModify, m_setBuf, m_bestBid, m_bestAsk, m_dep
 const me_transport_t* g_transport = nullptr;   /* harness report transport */
 void*                 g_sink      = nullptr;
 
-/* order_id -> {price_ticks, side}: the order's identity, kept so a CancelAck
- * for a resting order can echo its side and price — exchange-core's onCancel
- * reports only success/failure, not the order itself. */
-std::unordered_map<uint64_t, std::pair<int64_t, uint8_t>> g_shadow;
-
 /* Adapter-owned staging buffer: HarnessExchangeCore writes one record per fill,
  * this adapter converts each to a Trade report. 40-byte little-endian layout:
  *   sequence_number u64 @0, price_ticks i64 @8, quantity u32 @16,
- *   (pad @20), maker_order_id u64 @24, taker_order_id u64 @32. */
+ *   (pad @20), maker_order_id u64 @24, taker_order_id u64 @32.
+ * onCancel additionally stages the cancelled order's price (from the engine's
+ * REDUCE event) in record 0's price field — read below as g_stage[0].price. */
 struct StageTrade {
     uint64_t seq;
     int64_t  price;
@@ -163,9 +159,10 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_transport = transport;
     g_sink      = report_sink;
 
-    /* Size the shadow map up front so its operator[] inserts never rehash
-     * (heap-realloc) inside the timed window as the order population grows. */
-    g_shadow.reserve(1u << 21);
+    /* First-touch the staging buffer now so its pages never minor-fault
+     * inside the timed window (warmup deliberately redirects to a scratch
+     * buffer and leaves g_stage untouched). */
+    std::memset(g_stage, 0, sizeof(g_stage));
 
     /* Load libjvm with RTLD_NODELETE so its lifetime is decoupled from this
      * .so: the harness's dlclose() at the end then cannot unload a live JVM. */
@@ -205,18 +202,23 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     jclass cls = g_env->FindClass("HarnessExchangeCore");
     if (!cls) fatal("HarnessExchangeCore not found on the classpath");
 
-    jmethodID ctor = g_env->GetMethodID(cls, "<init>", "()V");
-    m_onNew    = g_env->GetMethodID(cls, "onNew",          "(JJJIII)I");
-    m_onCancel = g_env->GetMethodID(cls, "onCancel",       "(J)I");
-    m_onModify = g_env->GetMethodID(cls, "onModify",       "(JJJII)I");
-    m_setBuf   = g_env->GetMethodID(cls, "setTradeBuffer", "(Ljava/nio/ByteBuffer;)V");
-    m_bestBid  = g_env->GetMethodID(cls, "bestBid",        "()J");
-    m_bestAsk  = g_env->GetMethodID(cls, "bestAsk",        "()J");
-    m_depthAt  = g_env->GetMethodID(cls, "depthAt",        "(JI)J");
-    jmethodID m_warmup = g_env->GetMethodID(cls, "warmup", "()V");
-    if (!ctor || !m_onNew || !m_onCancel || !m_onModify || !m_setBuf ||
-        !m_bestBid || !m_bestAsk || !m_depthAt || !m_warmup)
-        fatal("a HarnessExchangeCore method signature was not found");
+    /* Adjudicate each lookup immediately: a failed GetMethodID leaves a
+     * pending NoSuchMethodError, and the JNI spec forbids calling most JNI
+     * functions (including the next GetMethodID) with an exception pending. */
+    auto lookup = [&](const char* name, const char* sig) -> jmethodID {
+        jmethodID id = g_env->GetMethodID(cls, name, sig);
+        if (!id) fatal(name);   /* fatal() prints the pending NoSuchMethodError */
+        return id;
+    };
+    jmethodID ctor = lookup("<init>", "()V");
+    m_onNew    = lookup("onNew",          "(JJJIII)I");
+    m_onCancel = lookup("onCancel",       "(J)I");
+    m_onModify = lookup("onModify",       "(JJJII)I");
+    m_setBuf   = lookup("setTradeBuffer", "(Ljava/nio/ByteBuffer;)V");
+    m_bestBid  = lookup("bestBid",        "()J");
+    m_bestAsk  = lookup("bestAsk",        "()J");
+    m_depthAt  = lookup("depthAt",        "(JI)J");
+    jmethodID m_warmup = lookup("warmup", "()V");
 
     jobject obj = g_env->NewObject(cls, ctor);
     check_exception("HarnessExchangeCore.<init>");
@@ -247,7 +249,6 @@ void engine_flush(void) {}
 void engine_on_new_order(const new_order_t* o) {
     emit_ack(ME_ORDER_ACK, o->sequence_number, o->order_id,
              o->side, o->price_ticks, o->quantity);
-    g_shadow[o->order_id] = { o->price_ticks, o->side };   // for a later CancelAck
     jint n = g_env->CallIntMethod(g_engine, m_onNew,
         static_cast<jlong>(o->order_id), static_cast<jlong>(o->sequence_number),
         static_cast<jlong>(o->price_ticks), static_cast<jint>(o->quantity),
@@ -260,16 +261,16 @@ void engine_on_new_order(const new_order_t* o) {
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    jint ok = g_env->CallIntMethod(g_engine, m_onCancel,
-                                   static_cast<jlong>(c->order_id));
+    /* onCancel answers from the engine's own id-keyed cancelOrder: the return
+     * is the cancelled order's side as 1 (bid) / 2 (ask) — its price arrives
+     * in g_stage[0].price from the engine's REDUCE event — or 0 when the
+     * order is not resting. No adapter-side order state exists. */
+    jint s = g_env->CallIntMethod(g_engine, m_onCancel,
+                                  static_cast<jlong>(c->order_id));
     check_exception("onCancel");
-    if (ok) {
-        // Order was resting and is now cancelled — echo its side/price.
-        int64_t price = 0;
-        uint8_t side  = 0;
-        auto it = g_shadow.find(c->order_id);
-        if (it != g_shadow.end()) { price = it->second.first; side = it->second.second; }
-        emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id, side, price, 0);
+    if (s) {
+        emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
+                 static_cast<uint8_t>(s - 1), g_stage[0].price, 0);
     } else {
         // Order is not resting — already filled, already cancelled, or never
         // seen (a duplicate/stale cancel). Answer with a reject, not an ack.
@@ -289,7 +290,6 @@ void engine_on_modify(const modify_t* m) {
         return;
     }
     emit_staged_trades(n);
-    g_shadow[m->order_id] = { m->new_price_ticks, m->side };  // reinserted at new price
     emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
              m->side, m->new_price_ticks, m->new_quantity);
 }

@@ -5,18 +5,28 @@
 //! exports the harness `engine_*` extern-C symbols directly. No C++ shim.
 //!
 //! What the engine provides natively (used here):
-//!   - `OrderBook::<()>::add_limit_order(id, price, qty, side, GTC, None)` —
-//!     synchronous, matches the incoming order against the book and rests
-//!     any residual. Returns a Result that we read to detect IOC residuals
-//!     and rejects.
-//!   - `OrderBook::cancel_order(id)` — synchronous, returns `Ok(Some(_))`
-//!     when the order was found and removed, `Ok(None)` when not present.
+//!   - `OrderBook::<()>::add_limit_order(id, price, qty, side, tif, None)` —
+//!     synchronous, matches the incoming order against the book, then rests
+//!     a GTC residual or (TimeInForce::Ioc) drops it, reporting the fill
+//!     through `Err(InsufficientLiquidity)`. We read the Result to derive
+//!     IOC residuals and rejects.
+//!   - `OrderBook::cancel_order(id)` — synchronous and natively id-keyed
+//!     (the engine keeps its own id index), returning `Ok(Some(order))` —
+//!     the removed order itself, carrying its side / price / live remaining
+//!     quantity — or `Ok(None)` as the native not-resting signal. That
+//!     payload drives the CancelAck/ModifyAck field echo and both reject
+//!     paths directly; the adapter keeps NO per-order state of its own.
 //!   - `OrderBook::best_bid()` / `best_ask()` — `Option<u128>`.
 //!   - `OrderBook::bids` / `asks` (pub(super) skip-map; reached indirectly
 //!     via `total_depth_at_levels` — but we want exact depth at one price,
-//!     so we walk via `levels_in_range(price..=price, side)`).
-//!   - `TradeListener` callback fires per `add_limit_order` with the full
-//!     `MatchResult`; we drain its `trades()` into harness Trade reports.
+//!     so we walk via `levels_in_range(price, price, side)`).
+//!   - `TradeListener` callback fires from `add_limit_order` whenever fills
+//!     occurred, with the full
+//!     `MatchResult`; we drain its `trades()` into harness Trade reports and
+//!     read its `remaining_quantity()` — the taker's post-match residual,
+//!     the same field the engine rests the residual from — which closes
+//!     `add_limit_order`'s residual ambiguity (its Ok return does not
+//!     decompose fills) without a `get_order` readback.
 //!
 //! Synthesised above the engine (engine emits none of these in the
 //! harness's wire format):
@@ -29,17 +39,18 @@
 //! directly without a sidecar map. The other two variants are not used.
 //!
 //! Modify contract: the harness defines modify as cancel + reinsert
-//! (queue-priority lost) — the upstream `update_order` API is in-place,
-//! which would not match the canonical behaviour, so the adapter does
-//! the cancel + reinsert explicitly.
+//! (queue-priority lost). The upstream `update_order`'s price-change
+//! variants are themselves cancel_order + add_order internally, routed
+//! through an extra get_order + Arc clone and returning only the
+//! post-match order — the adapter performs the same two native calls
+//! directly, because cancel_order's returned payload also seeds the
+//! ModifyAck side echo.
 
 use orderbook_rs::OrderBook;
 use orderbook_rs::orderbook::trade::TradeResult;
 use pricelevel::{Id, Side, TimeInForce};
-use std::cell::RefCell;
+use std::cell::{Cell, UnsafeCell};
 use std::os::raw::{c_uchar, c_uint, c_void};
-use std::sync::Mutex;
-use std::sync::OnceLock;
 
 // =============================================================================
 // Harness ABI mirrors. Layout MUST match api/matching_engine_api.h exactly.
@@ -118,52 +129,67 @@ pub struct MeTransport {
 // Adapter state
 // =============================================================================
 
-// Transport vtable + sink, set in engine_init. Stored as raw pointers/integers
-// inside an atomic-friendly container so we never need to box-and-clone.
+// Transport vtable + sink, set in engine_init.
 struct Transport {
     vtable: *const MeTransport,
     sink: *mut c_void,
 }
-// SAFETY: harness owns both pointers; once engine_init returns they are stable
-// until engine_shutdown. We use them from the matcher thread only.
-unsafe impl Send for Transport {}
-unsafe impl Sync for Transport {}
 
-static TRANSPORT: OnceLock<Transport> = OnceLock::new();
-// The OrderBook itself: single instance, single-threaded matcher.
-// Mutex is only contended by the matcher thread; OrderBook is &-method-only
-// for the hot path, so we'd ideally hold &OrderBook directly, but a OnceLock
-// of OrderBook would need it to be Sync — it is, but we also need the trade
-// listener to capture g_cur_seq via a thread-local, which is fine.
-static BOOK: OnceLock<OrderBook<()>> = OnceLock::new();
-
-// Shadow map: per-order {side, price, remaining, alive}. Drives the reject
-// path and CancelAck/ModifyAck side/price echo, mirroring the C++ adapters'
-// approach. The engine has no public "is this order resting?" predicate that
-// also returns side/price without an Arc clone, so the shadow is the simplest
-// and fastest source of truth for the adapter's bookkeeping.
-struct Shadow {
-    price: i64,
-    side: u8,
-    remaining: u32,
-    alive: bool,
+// Single-thread-owned global. The harness drives every engine_on_* / query_*
+// call from ONE matcher thread (the drainer touches only the transport), so
+// the adapter state needs no synchronization at all. A `static` still
+// requires `Sync`, so this cell provides interior mutability via `UnsafeCell`
+// with the single-thread-ownership invariant documented at each accessor.
+// No lock and no atomic on the hot path — the Rust expression of the C++
+// reference adapters' plain globals (same pattern as the philipgreat adapter).
+struct ThreadOwned<T>(UnsafeCell<Option<T>>);
+// SAFETY: every access is from the single matcher thread; the `Sync` bound
+// exists only to satisfy the `static` requirement, not to permit sharing.
+unsafe impl<T> Sync for ThreadOwned<T> {}
+impl<T> ThreadOwned<T> {
+    const fn new() -> Self {
+        Self(UnsafeCell::new(None))
+    }
+    /// Initialise once, from engine_init, before any other entry point runs.
+    /// SAFETY: single matcher thread, init phase, no other live access.
+    #[inline(always)]
+    unsafe fn init(&self, value: T) {
+        *self.0.get() = Some(value);
+    }
+    /// Shared borrow (hot path + audit queries — the engine book is
+    /// `&self`-method-only, so no mutable accessor is needed here).
+    /// SAFETY: single matcher thread, `init` ran first.
+    #[inline(always)]
+    unsafe fn get_ref(&self) -> &T {
+        (*self.0.get()).as_ref().unwrap_unchecked()
+    }
 }
-// HashMap behind Mutex — single-matcher hot path, no real contention. Sized
-// up front to skip rehashes in the workload.
-static SHADOW: OnceLock<Mutex<std::collections::HashMap<u64, Shadow>>> = OnceLock::new();
 
-// Per-call context — the seq of the currently-processing harness message
-// and its order id. The TradeListener installed on the book reads these to
-// stamp each Trade report. Single matcher thread, so a thread-local is the
-// natural fit.
+// The harness owns both transport pointers; once engine_init returns they are
+// stable until engine_shutdown, and only the matcher thread pushes reports.
+static TRANSPORT: ThreadOwned<Transport> = ThreadOwned::new();
+// The OrderBook itself: single instance, owned by the matcher thread. Every
+// hot-path method takes `&self`. The engine natively keys each resting order
+// by id (its internal order_locations index), and cancel_order(id) returns
+// the removed order's side/price/remaining — so the adapter keeps NO
+// per-order state: rejects and ack field echo come from the engine itself.
+static BOOK: ThreadOwned<OrderBook<()>> = ThreadOwned::new();
+
+// Per-call context — the seq of the currently-processing harness message,
+// its order id, and the taker's post-match residual. The TradeListener
+// installed on the book reads the first two to stamp each Trade report and
+// writes the third from MatchResult::remaining_quantity(). Single matcher
+// thread, so Cell thread-locals are the natural fit.
 thread_local! {
-    static CUR_SEQ: RefCell<u64> = const { RefCell::new(0) };
-    static CUR_TAKER: RefCell<u64> = const { RefCell::new(0) };
+    static CUR_SEQ: Cell<u64> = const { Cell::new(0) };
+    static CUR_TAKER: Cell<u64> = const { Cell::new(0) };
+    static CUR_REMAINING: Cell<u32> = const { Cell::new(0) };
 }
 
 #[inline]
 fn emit(r: &Report) {
-    let t = TRANSPORT.get().expect("transport not initialised");
+    // SAFETY: matcher thread only; TRANSPORT.init ran in engine_init.
+    let t = unsafe { TRANSPORT.get_ref() };
     unsafe {
         // Spin until accepted. Matches the C++ adapters' pattern.
         while ((*t.vtable).push)(t.sink, r as *const Report) == 0 {
@@ -208,21 +234,22 @@ pub extern "C" fn engine_init(
     transport: *const MeTransport,
     sink: *mut c_void,
 ) {
-    TRANSPORT
-        .set(Transport {
-            vtable: transport,
-            sink,
-        })
-        .ok();
+    // SAFETY: init phase — the harness has not started delivering messages yet.
+    unsafe { TRANSPORT.init(Transport { vtable: transport, sink }) };
 
     // Install the book with a trade listener that converts every match-result
     // transaction into a harness Trade report. The listener fires inline from
     // add_limit_order on the matcher thread, so reading the per-call seq /
-    // taker via thread-locals is well-defined.
+    // taker via thread-locals is well-defined. It also records the taker's
+    // post-match residual — the same field the engine rests the residual
+    // from — so the adapter never needs a get_order readback. The engine
+    // maintains every maker's remaining quantity itself (pricelevel re-stores
+    // partially filled makers at their reduced quantity), so no maker
+    // bookkeeping happens here either.
     let listener = std::sync::Arc::new(|tr: &TradeResult| {
-        let seq = CUR_SEQ.with(|s| *s.borrow());
-        let taker_oid = CUR_TAKER.with(|s| *s.borrow());
-        let mut shadow_borrow = SHADOW.get().unwrap().lock().unwrap();
+        let seq = CUR_SEQ.with(|s| s.get());
+        let taker_oid = CUR_TAKER.with(|s| s.get());
+        CUR_REMAINING.with(|s| s.set(tr.match_result.remaining_quantity() as u32));
         for tx in tr.match_result.trades().as_vec() {
             let price = tx.price().as_u128() as i64;
             let qty = tx.quantity().as_u64() as u32;
@@ -241,37 +268,22 @@ pub extern "C" fn engine_init(
                 _reserved3: 0,
             };
             emit(&r);
-            // Update shadow for the maker — partial fills decrement, full fills
-            // mark dead. The harness's CancelReject contract depends on this.
-            if let Some(s) = shadow_borrow.get_mut(&maker) {
-                if s.remaining > qty {
-                    s.remaining -= qty;
-                } else {
-                    s.remaining = 0;
-                    s.alive = false;
-                }
-            }
         }
     });
 
-    // with_trade_listener installs the closure at construction time so we
-    // never need a `&mut OrderBook` after the OnceLock has taken ownership.
+    // with_trade_listener installs the closure at construction time so the
+    // book never needs `&mut` after the cell has taken ownership.
     let book = OrderBook::<()>::with_trade_listener("HARNESS", listener);
-    BOOK.set(book).ok();
-
-    SHADOW
-        .set(Mutex::new(std::collections::HashMap::with_capacity(
-            1 << 21,
-        )))
-        .ok();
+    // SAFETY: init phase, single thread, no other live access.
+    unsafe { BOOK.init(book) };
 }
 
 #[no_mangle]
 pub extern "C" fn engine_shutdown() {
-    // The harness loads, runs once, and tears down. OnceLocks live for the
-    // process lifetime; do nothing here. Mirrors the C++ adapters' shutdown
-    // (which typically just resets unique_ptrs that the dlclose path would
-    // free anyway).
+    // The harness loads, runs once, and tears down. The ThreadOwned cells
+    // live for the process lifetime; do nothing here. Mirrors the C++
+    // adapters' shutdown (which typically just resets unique_ptrs that the
+    // dlclose path would free anyway).
 }
 
 #[no_mangle]
@@ -299,54 +311,53 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
         o.quantity,
     );
 
-    CUR_SEQ.with(|s| *s.borrow_mut() = o.sequence_number);
-    CUR_TAKER.with(|s| *s.borrow_mut() = o.order_id);
+    CUR_SEQ.with(|s| s.set(o.sequence_number));
+    CUR_TAKER.with(|s| s.set(o.order_id));
+    // Preset the residual to the full quantity; the trade listener overwrites
+    // it with the engine's post-match remaining_quantity() iff fills occur.
+    CUR_REMAINING.with(|s| s.set(o.quantity));
 
-    let book = BOOK.get().unwrap();
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
     let side = if o.side == 0 { Side::Buy } else { Side::Sell };
     let id = Id::Sequential(o.order_id);
-    // GTC for both paths; IOC residual is handled below via the harness's
-    // CancelAck synthesis, not via engine TimeInForce::Ioc. Doing so lets the
-    // engine emit any trades through the listener first, then we synthesise
-    // the residual CancelAck at a known point — keeping report ordering
-    // deterministic and aligned with the C++ adapters.
+    // Engine-native time-in-force: harness IOC is the engine's Ioc. Trades
+    // emit through the listener during matching either way; an Ioc residual
+    // is dropped by the engine itself (never rests).
+    let tif = if o.ioc != 0 { TimeInForce::Ioc } else { TimeInForce::Gtc };
     let result = book.add_limit_order(
         id,
-        o.price_ticks as u128,
+        o.price_ticks as u128,   // harness ticks are non-negative: lossless
         o.quantity as u64,
         side,
-        TimeInForce::Gtc,
+        tif,
         None,
     );
 
     let remaining: u32 = match result {
-        Ok(_) => {
-            // Engine accepted; remaining quantity is the book's resting balance
-            // for this order — but `add_limit_order` doesn't return the
-            // pre-/post-match decomposition. Read it back from the shadow via
-            // total_quantity at the price level filtered to this id… or read
-            // it from the engine's get_order. The latter is one DashMap lookup
-            // and keeps the adapter independent of how matching distributed
-            // partial fills across resting orders.
-            book.get_order(id)
-                .map(|arc| arc.visible_quantity() as u32)
-                .unwrap_or(0)
-        }
+        // Engine accepted (GTC, or an IOC that fully filled). The trade
+        // listener (fired inline iff any fills occurred) recorded the taker's
+        // post-match remaining_quantity() — the very value the engine rests
+        // the residual from; with no fills the preset full quantity stands.
+        // add_limit_order's own Ok return does not decompose fills.
+        Ok(_) => CUR_REMAINING.with(|s| s.get()),
+        // The engine's native IOC answer: a partially-filled or unfilled Ioc
+        // drops its residual internally and reports the fill through
+        // `available` (= quantity - remaining), after the listener has
+        // already emitted the trades.
         Err(orderbook_rs::OrderBookError::InsufficientLiquidity { available, .. }) => {
-            // Only reachable for IOC/FOK in the engine; we don't pass those
-            // flags, so this branch in practice never fires. Treat as fully
-            // filled by `available` units.
             (o.quantity as u64).saturating_sub(available) as u32
         }
+        // Defensive: no other error is reachable for a plain GTC/Ioc limit
+        // add under the harness contract (no tick/lot/STP/risk validation
+        // is configured); 0 yields the same rejects downstream either way.
         Err(_) => 0,
     };
 
     if o.ioc != 0 {
-        // IOC: the engine accepted as GTC and the residual rested. Cancel the
-        // residual and emit one CancelAck for the un-filled portion. The trade
-        // reports for the filled portion were already pushed by the listener.
+        // The engine already discarded the residual (native Ioc semantics);
+        // synthesise the harness's CancelAck for the unfilled remainder.
         if remaining > 0 {
-            let _ = book.cancel_order(id);
             emit_ack(
                 ME_CANCEL_ACK,
                 o.sequence_number,
@@ -359,51 +370,37 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
         return;
     }
 
-    // GTC: remember resting state for cancel/modify reject paths.
-    let mut shadow = SHADOW.get().unwrap().lock().unwrap();
-    shadow.insert(
-        o.order_id,
-        Shadow {
-            price: o.price_ticks,
-            side: o.side,
-            remaining,
-            alive: remaining > 0,
-        },
-    );
+    // GTC: the engine rested any residual under the harness id in its own
+    // id index — cancel/modify rejects and ack echo come straight from
+    // cancel_order's return, so there is nothing to record here. A fully
+    // filled taker was never placed, which is exactly what makes a later
+    // cancel of it the native Ok(None) reject.
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
     let c = unsafe { &*cancel };
-    let mut shadow = SHADOW.get().unwrap().lock().unwrap();
-    let s_opt = shadow.get(&c.order_id).map(|s| (s.side, s.price, s.remaining, s.alive));
-    match s_opt {
-        Some((side, price, remaining, true)) => {
-            let book = BOOK.get().unwrap();
-            let id = Id::Sequential(c.order_id);
-            match book.cancel_order(id) {
-                Ok(Some(_)) => {
-                    emit_ack(
-                        ME_CANCEL_ACK,
-                        c.sequence_number,
-                        c.order_id,
-                        side,
-                        price,
-                        remaining,
-                    );
-                    if let Some(s) = shadow.get_mut(&c.order_id) {
-                        s.alive = false;
-                    }
-                }
-                _ => {
-                    // Engine disagrees with shadow — the order was filled away
-                    // between the shadow update and now. Reject.
-                    emit_ack(ME_CANCEL_REJECT, c.sequence_number, c.order_id, 0, 0, 0);
-                    if let Some(s) = shadow.get_mut(&c.order_id) {
-                        s.alive = false;
-                    }
-                }
-            }
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
+    // The engine's cancel is natively id-keyed and returns the removed order
+    // itself — side, price, and live remaining quantity (pricelevel re-stores
+    // partially filled makers at their reduced quantity). Ok(None) is the
+    // native not-resting signal: already filled, already cancelled, or never
+    // seen. The CancelAck echo and the reject decision both come straight
+    // from that one call.
+    match book.cancel_order(Id::Sequential(c.order_id)) {
+        Ok(Some(o)) => {
+            emit_ack(
+                ME_CANCEL_ACK,
+                c.sequence_number,
+                c.order_id,
+                match o.side() {
+                    Side::Buy => 0,
+                    Side::Sell => 1,
+                },
+                o.price().as_u128() as i64,
+                o.visible_quantity() as u32,
+            );
         }
         _ => {
             emit_ack(ME_CANCEL_REJECT, c.sequence_number, c.order_id, 0, 0, 0);
@@ -414,66 +411,51 @@ pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
 #[no_mangle]
 pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
     let m = unsafe { &*modify };
-    let book = BOOK.get().unwrap();
-
-    let (cur_side, cur_alive) = {
-        let shadow = SHADOW.get().unwrap().lock().unwrap();
-        match shadow.get(&m.order_id) {
-            Some(s) => (s.side, s.alive),
-            None => (0u8, false),
-        }
-    };
-    if !cur_alive {
-        emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
-        return;
-    }
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
 
     let id = Id::Sequential(m.order_id);
-    // The harness modify contract is cancel + reinsert; do the cancel against
-    // the engine, emit ModifyAck at the new price/qty, then re-submit as a
-    // new order on the same side so any crossing fills emit through the trade
-    // listener tagged with the modify's seq.
-    if book.cancel_order(id).map(|opt| opt.is_some()).unwrap_or(false) {
-        emit_ack(
-            ME_MODIFY_ACK,
-            m.sequence_number,
-            m.order_id,
-            cur_side,
-            m.new_price_ticks,
-            m.new_quantity,
-        );
+    // The harness modify contract is cancel + reinsert. The engine's id-keyed
+    // cancel doubles as the resting test: Ok(Some(order)) hands back the
+    // removed order — its side seeds the reinsert — while Ok(None) is the
+    // native not-resting reject. (update_order's price-change variants are
+    // the same cancel + add internally, but return no removed-order payload
+    // for the side echo.)
+    match book.cancel_order(id) {
+        Ok(Some(o)) => {
+            let side = o.side();
+            emit_ack(
+                ME_MODIFY_ACK,
+                m.sequence_number,
+                m.order_id,
+                match side {
+                    Side::Buy => 0,
+                    Side::Sell => 1,
+                },
+                m.new_price_ticks,
+                m.new_quantity,
+            );
 
-        CUR_SEQ.with(|s| *s.borrow_mut() = m.sequence_number);
-        CUR_TAKER.with(|s| *s.borrow_mut() = m.order_id);
+            CUR_SEQ.with(|s| s.set(m.sequence_number));
+            CUR_TAKER.with(|s| s.set(m.order_id));
 
-        let side = if cur_side == 0 { Side::Buy } else { Side::Sell };
-        let _ = book.add_limit_order(
-            id,
-            m.new_price_ticks as u128,
-            m.new_quantity as u64,
-            side,
-            TimeInForce::Gtc,
-            None,
-        );
-        let remaining = book
-            .get_order(id)
-            .map(|arc| arc.visible_quantity() as u32)
-            .unwrap_or(0);
-        let mut shadow = SHADOW.get().unwrap().lock().unwrap();
-        shadow.insert(
-            m.order_id,
-            Shadow {
-                price: m.new_price_ticks,
-                side: cur_side,
-                remaining,
-                alive: remaining > 0,
-            },
-        );
-    } else {
-        emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
-        let mut shadow = SHADOW.get().unwrap().lock().unwrap();
-        if let Some(s) = shadow.get_mut(&m.order_id) {
-            s.alive = false;
+            // Re-add on the same side so any crossing fills emit through the
+            // trade listener tagged with the modify's seq. The engine rests
+            // any residual itself — no adapter bookkeeping follows.
+            // Result discarded: a GTC reinsert of a just-cancelled id cannot
+            // fail (no duplicate, no validation configured), and the listener
+            // has already emitted any crossing trades by the time it returns.
+            let _ = book.add_limit_order(
+                id,
+                m.new_price_ticks as u128,   // non-negative ticks: lossless
+                m.new_quantity as u64,
+                side,
+                TimeInForce::Gtc,
+                None,
+            );
+        }
+        _ => {
+            emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
         }
     }
 }
@@ -484,7 +466,8 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
 
 #[no_mangle]
 pub extern "C" fn engine_query_best_bid() -> i64 {
-    let book = BOOK.get().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
     match book.best_bid() {
         Some(p) => p as i64,
         None => i64::MIN,
@@ -493,7 +476,8 @@ pub extern "C" fn engine_query_best_bid() -> i64 {
 
 #[no_mangle]
 pub extern "C" fn engine_query_best_ask() -> i64 {
-    let book = BOOK.get().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
     match book.best_ask() {
         Some(p) => p as i64,
         None => i64::MAX,
@@ -505,7 +489,8 @@ pub extern "C" fn engine_query_depth_at(price_ticks: i64, side: c_uchar) -> u64 
     if price_ticks < 0 {
         return 0;
     }
-    let book = BOOK.get().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let book = unsafe { BOOK.get_ref() };
     let p = price_ticks as u128;
     // Walk levels-in-range filtered to this exact price. The engine's
     // levels_in_range yields LevelInfo { price, quantity } per level.

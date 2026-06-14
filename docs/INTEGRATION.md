@@ -4,7 +4,7 @@ An engine under test is a shared library (`.so`) that exports the C ABI in
 `api/matching_engine_api.h`. The harness loads it with `dlopen` and drives it
 one message at a time. This document is the how-to; the three adapters in
 `adapters/` are the minimal worked examples, and `additional_references/`
-contains eight more worked adapters (six C++, one Rust, one Go), several of
+contains eleven more worked adapters (six C++, three Rust, two Go), several of
 which patch the upstream source at build time and may be the closest
 template depending on the engine's shape.
 
@@ -136,8 +136,11 @@ because the upstream is missing something the harness needs:
   declares but never calls.
 - `geseq_adapter/build.sh` adds a missing `compare()` recheck inside the
   upstream's inner matching loop.
-- `tzadiko_adapter/build.sh` replaces a Windows-only `localtime_s` call and
-  drops a per-match allocation hint.
+- `tzadiko_adapter/build.sh` replaces a Windows-only `localtime_s` call,
+  drops a per-match allocation hint, and fixes a self-deadlock in the
+  engine's FillAndKill tail-cancel (the public `CancelOrder` re-locked a
+  mutex `AddOrder` already held; the patch switches the two sites to the
+  engine's own already-locked `CancelOrderInternal`).
 
 Convention: apply the patch with `sed` or a Python `str.replace`, and make
 it idempotent — `git reset --hard <pinned-sha>` first so a rerun starts
@@ -187,6 +190,6 @@ scripts/build_baselines.sh liquibook
 Then plug in your engine. A correct engine reproduces the published hash and
 passes the state audit. If the hash differs, diff your output against
 `reference/canonical_output.txt.gz` (decompress first with `gunzip -k`, or
-regenerate via `./harness --scenario normal --mode audit --write-reference`)
+regenerate via `./harness --baseline liquibook --scenario normal --write-reference`)
 to find the first divergent report (the line format is in
 `docs/METHODOLOGY.md`).

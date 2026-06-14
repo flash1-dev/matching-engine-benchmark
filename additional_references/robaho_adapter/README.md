@@ -9,7 +9,7 @@ Pinned commits:
 - `robaho/cpp_orderbook` — `f42358145e40015f709f1caa04670f88c8b8be40`
 - `robaho/cpp_fixed`     — `e6bdb17d4ac9bb871ac34666a5bcb0563a027703`
 
-This adapter is one of eight worked examples in `additional_references/` —
+This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `discoveries.md` at the
 repository root for the observations the harness produced against this
 snapshot.
@@ -33,17 +33,24 @@ Not provided natively: no IOC / FOK / POST-ONLY; no native modify;
 ## Adapter strategy
 
 - `HarnessListener : ExchangeListener` captures every `onTrade` into a
-  thread-local fill buffer that the adapter drains into Trade reports after
-  each submit.
+  global fill buffer (the single matcher thread is the only caller) that
+  the adapter drains into Trade reports after each submit; the taker id is
+  parsed from the engine's own `aggressor` payload on each trade.
 - Prices: workload `int64_t` ticks written into `Fixed<7>(int64_t, 0)`
   (stores `ticks * 10^7` as fp). Tick ordering is preserved bit-for-bit
   through Fixed's internal comparator.
 - Order-id mapping: `std::to_string(oid)` on submit; `std::stoull` on the
   trade callback.
-- **IOC**: post-submit `Exchange::cancel` of the residual + emit `CancelAck`.
+- **IOC**: post-submit `Exchange::cancel` of the residual + emit `CancelAck`
+  (the engine has no IOC flag).
 - **Modify**: explicit cancel + re-submit (engine has no native modify).
-- Shadow map for reject path, CancelAck/ModifyAck side/price echo, and to
-  remember the engine's per-order `exchangeId` for `Exchange::cancel`.
+- A per-order shadow (a flat vector indexed by the dense harness order id)
+  remembers the engine-assigned `exchangeId` — the engine names orders with
+  its own ids, so the translation map is unavoidable — plus the side/price/
+  remaining echoed on CancelAck/ModifyAck. For any *recorded* exchangeId the
+  engine's own `cancel` return code adjudicates success vs reject; only ids
+  with no recorded exchangeId (never seen, or IOC — never resting) reject in
+  the adapter as a translation gap.
 
 A one-token source-level fix is required for C++20 conformance:
 `exchange.h` and `bookmap.h` declare `std::vector<const std::string>`, which

@@ -12,10 +12,13 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
-# Pinned by ME_LIMITBOOK_SRC / build.sh — path is filled in at build time.
+# Default checkout path; build.sh hard-resets it to the pinned SHA, and swaps
+# the path (restoring on exit) when ME_LIMITBOOK_SRC overrides the checkout.
 limitbook = { path = "../../../third_party/limitbook" }
 # limitbook's public API is in rust_decimal::Decimal; we construct/inspect
-# prices through the same crate version the engine pins (1.37.x).
+# prices through the same crate version cargo resolves for the engine's
+# rust_decimal = "1.37.2" requirement (one unified version in Cargo.lock —
+# Decimal type identity across the boundary is enforced by the compiler).
 rust_decimal = "1.37"
 
 # No [profile.release] overrides. House rule for Rust adapters: plain

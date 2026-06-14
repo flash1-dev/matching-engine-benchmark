@@ -8,9 +8,9 @@
  *
  * The engine emits only Trade events (and no Ack/Reject types at all), so the
  * adapter synthesises OrderAck / CancelAck / ModifyAck / CancelReject /
- * ModifyReject around the engine. A small shadow map (oid -> {price, side,
+ * ModifyReject around the engine. A per-order shadow (oid -> {price, side,
  * remaining qty, alive}) tracks order state for the synthesised reports;
- * the TradeCallback (well — the strategy's trades vector) keeps it current.
+ * the trades vector match() fills keeps it current.
  *
  * IOC: piyush has no IOC type. The adapter submits the order as Limit, then
  * if any residual remains after matching, calls book.cancelOrder + emits a
@@ -20,14 +20,12 @@
  */
 #include "matching_engine_api.h"
 
-#include "Exchange.hpp"
 #include "OrderBook.hpp"
 #include "MatchingStrategy.hpp"
 #include "Order.hpp"
 
 #include <cstdint>
-#include <cstring>
-#include <unordered_map>
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -50,19 +48,27 @@ struct Shadow {
     uint32_t remaining;  // current open quantity
     bool     alive;
 };
-std::unordered_map<uint64_t, Shadow> g_shadow;
+/* Harness order ids are dense and 1-based, so a flat vector indexed by
+ * order_id holds the shadow — no per-insert node allocation on the timed
+ * path; a never-rested id is a zero slot (alive=false), the same reject
+ * outcome a map miss produced. The engine itself indexes these exact ids
+ * with a flat preallocated vector (OrderBook::idToLocation), proving the
+ * pattern. Sized in engine_init; engine_prebuild grows it if ever needed. */
+std::vector<Shadow> g_shadow;
+
+/* Bounds-checked flat-vector lookup; nullptr / alive=false = not resting. */
+inline Shadow* find_order(uint64_t ext_id) {
+    return ext_id < g_shadow.size() ? &g_shadow[ext_id] : nullptr;
+}
 
 // Reused trades buffer: avoids a per-message heap malloc+free that a fresh
 // local std::vector would incur on the timed hot path. Reserved once in
 // engine_init, cleared (not reallocated) at each match site. Mirrors the
-// reserved thread_local fills buffer in jxm35_adapter / robaho_adapter.
+// reserved fills buffer in jxm35_adapter / robaho_adapter.
 std::vector<Trade> g_trades;
 
 inline void emit(const me_report_t& r) {
-    while (!g_transport->push(g_sink, &r)) {
-        // single-thread inline matching — transport push never fills, but a
-        // burst-batching transport might. spin briefly.
-    }
+    while (!g_transport->push(g_sink, &r)) { /* spin */ }
 }
 
 inline void emit_ack(uint8_t type, uint64_t seq, uint64_t order_id,
@@ -92,13 +98,13 @@ inline uint64_t flush_trades(std::vector<Trade>& trades, uint64_t taker_seq) {
         r.taker_order_id  = t.takerOrderId;
         emit(r);
         taker_filled += t.quantity;
-        if (auto it = g_shadow.find(t.makerOrderId); it != g_shadow.end()) {
-            if (it->second.remaining >= t.quantity) {
-                it->second.remaining -= t.quantity;
+        if (Shadow* s = find_order(t.makerOrderId)) {
+            if (s->remaining >= t.quantity) {
+                s->remaining -= t.quantity;
             } else {
-                it->second.remaining = 0;
+                s->remaining = 0;
             }
-            if (it->second.remaining == 0) it->second.alive = false;
+            if (s->remaining == 0) s->alive = false;
         }
     }
     trades.clear();
@@ -113,15 +119,28 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport, void* sink)
     g_transport = transport;
     g_sink      = sink;
     g_book      = new OrderBook();
+    /* resize (not reserve): zero-fills the slots (alive=false) and faults the
+     * pages in, both untimed. engine_prebuild grows past this if needed. */
     g_shadow.clear();
-    g_shadow.reserve(1u << 21);   // ~2M entries headroom
-    g_trades.reserve(64);
+    g_shadow.resize(1u << 21);    // ~2M entries headroom
+    g_trades.reserve(64);         // matches the jxm35/robaho fills buffers
+}
+
+/* Pre-build hook: only used to size the flat shadow vector to the workload's
+ * id range, outside the timed window. */
+void engine_prebuild(uint8_t msg_type, const void* msg) {
+    if (msg_type != 0) return;
+    const new_order_t* o = static_cast<const new_order_t*>(msg);
+    if (o->order_id >= g_shadow.size())
+        g_shadow.resize(std::max<size_t>(g_shadow.size() * 2,
+                                         static_cast<size_t>(o->order_id) + 1));
 }
 
 void engine_shutdown(void) {
     delete g_book;
     g_book = nullptr;
     g_shadow.clear();
+    g_trades.clear();
 }
 
 void engine_flush(void) {
@@ -173,25 +192,24 @@ void engine_on_new_order(const new_order_t* o) {
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    auto it = g_shadow.find(c->order_id);
-    if (it == g_shadow.end() || !it->second.alive) {
+    Shadow* s = find_order(c->order_id);
+    if (!s || !s->alive) {
         emit_ack(ME_CANCEL_REJECT, c->sequence_number, c->order_id, 0, 0, 0);
         return;
     }
     g_book->cancelOrder(c->order_id);
-    const auto& s = it->second;
     emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
-             s.side, s.price, s.remaining);
-    it->second.alive = false;
+             s->side, s->price, s->remaining);
+    s->alive = false;
 }
 
 void engine_on_modify(const modify_t* m) {
-    auto it = g_shadow.find(m->order_id);
-    if (it == g_shadow.end() || !it->second.alive) {
+    Shadow* s = find_order(m->order_id);
+    if (!s || !s->alive) {
         emit_ack(ME_MODIFY_REJECT, m->sequence_number, m->order_id, 0, 0, 0);
         return;
     }
-    const uint8_t side = it->second.side;
+    const uint8_t side = s->side;
     g_book->cancelOrder(m->order_id);
     emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
              side, m->new_price_ticks, m->new_quantity);
@@ -214,7 +232,7 @@ void engine_on_modify(const modify_t* m) {
     const uint32_t residual = (filled < m->new_quantity)
                                   ? static_cast<uint32_t>(m->new_quantity - filled)
                                   : 0u;
-    it->second = { m->new_price_ticks, side, residual, residual > 0 };
+    *s = { m->new_price_ticks, side, residual, residual > 0 };
 }
 
 int64_t engine_query_best_bid(void) {

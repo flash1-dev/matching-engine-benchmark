@@ -10,14 +10,19 @@
  *
  * REPRODUCIBILITY NOTE. Only std::mt19937 is bit-portable across C++ standard
  * libraries; std::normal_distribution / std::discrete_distribution / etc. are
- * NOT. To keep the published correctness hash platform-independent, every
- * distribution below is implemented by hand on top of std::mt19937. The same
- * (scenario, count, seed) therefore yields a byte-identical workload on any
- * compiler/platform.
+ * NOT. So every distribution below is implemented by hand on top of
+ * std::mt19937 — the RNG word stream and the distribution algorithms are then
+ * identical everywhere. One residual dependency remains: the hand-rolled
+ * distributions call libm transcendentals (std::cos / exp / log / pow), which
+ * are not standardized to the last bit across libm implementations (glibc,
+ * musl, Apple, MSVC). In practice the workload reproduces bit-for-bit across
+ * mainstream glibc builds (the shipped reference is generated on glibc/aarch64);
+ * the shipped reference hash -- not the generator -- is the canonical artifact,
+ * so on an exotic libm, regenerate the reference locally with a trusted baseline.
  *
  * Usage:  generator <scenario> <out.bin> [count] [seed]
  *         scenario in {static, normal, swing-25, swing-40, flash-crash}
- *         count defaults to 1000000, seed defaults to 12345
+ *         count defaults to 1000000, seed defaults to 23 (the canonical seed)
  */
 
 #include <cstdint>
@@ -46,15 +51,25 @@ constexpr double   DUP_CANCEL_PCT  = 0.02;      // cancels re-sent as a duplicat
 constexpr double   DUP_MODIFY_PCT  = 0.02;      // modified+cancelled orders given a stale modify
 constexpr double   IOC_PCT         = 0.15;      // new orders marked IOC
 constexpr double   MEDIAN_LIFE_MS  = 0.431;     // non-IOC lifetime median (paper §6.1)
-constexpr double   P_AGGRESSIVE    = 0.05;      // new orders priced to cross the spread
-constexpr uint32_t AGGR_MAX_DEPTH  = 4;         // a marketable order crosses 1..4 ticks
 
 constexpr uint64_t WORKLOAD_MAGIC   = 0x4D4542575F303031ULL;  // "MEBW_001"
 constexpr uint32_t WORKLOAD_VERSION = 1;
+constexpr uint32_t DEFAULT_SEED     = 23;       // canonical seed — see Scenario note
 
 // Workload message types (the on-disk record's `type` byte).
 enum : uint8_t { MSG_NEW = 0, MSG_CANCEL = 1, MSG_MODIFY = 2 };
 
+// The construction is the paper benchmark's, ported verbatim onto the
+// portable RNG: a driftless GBM mid-price whose total diffusion equals the
+// scenario's target swing, buy flow priced along the first half of the path
+// and sell flow along the second, and arrival order fully shuffled. How
+// deep a standing book a given run carries is a property of the
+// REALISATION, not the model: a path whose two halves separate strands part
+// of the early side's resting tail out of the late side's reach, while a
+// path that straddles its start re-sweeps everything it leaves behind. The
+// canonical seed (DEFAULT_SEED below) is chosen so each scenario's
+// realisation carries a standing book representative of the regime the
+// paper's own benchmark runs exercised; see docs/METHODOLOGY.md.
 struct Scenario { const char* name; double volatility; double target_swing; };
 constexpr Scenario SCENARIOS[] = {
     { "static",      0.00, 0.00 },
@@ -97,8 +112,10 @@ struct Rng {
 };
 
 // Power-law depth sampler with a near-touch hump: weight(k) =
-// 1/(k+1)^alpha + HUMP_AMP * exp(-0.5*((k-HUMP_CENTER))^2). Sampled by
-// binary search over the precomputed CDF — portable.
+// 1/(k+1)^alpha + HUMP_AMP * exp(-0.5*((k-HUMP_CENTER))^2) — the paper
+// benchmark's placement profile, reproducing the near-touch liquidity
+// concentration of real books. Sampled by binary search over the
+// precomputed CDF — portable.
 struct LevelSampler {
     std::vector<double> cdf;
     LevelSampler() {
@@ -156,32 +173,35 @@ std::vector<Msg> generate(const Scenario& sc, size_t count, uint32_t seed) {
         int64_t mid_ticks = to_ticks(std::round(mid / TICK_SIZE) * TICK_SIZE);
 
         int  lvl    = levels.sample(rng);
+        // The paper's construction: buy flow is generated along the first
+        // half of the mid path, sell flow along the second. Arrival order is
+        // fully shuffled below, so the wire stream interleaves the sides —
+        // but each side's PRICE distribution keeps its own half's range.
+        // When a realisation's two halves separate, part of the early side's
+        // resting tail ends up out of the late side's reach for the rest of
+        // the session: that stranded tail is the standing book the engine
+        // carries (see the canonical-seed note above SCENARIOS).
         bool is_buy = (i < count / 2);
-        bool aggr   = rng.uniform() < P_AGGRESSIVE;
 
-        int64_t px;
-        if (aggr) {
-            // Marketable: priced through the mid into the opposite side so it
-            // crosses resting liquidity even when the mid is static.
-            uint32_t depth = rng.uniform_int(1, AGGR_MAX_DEPTH);
-            px = is_buy ? mid_ticks + depth : mid_ticks - depth;
-        } else {
-            // Resting: 1+ ticks away from the mid on the order's own side.
-            px = is_buy ? mid_ticks - (lvl + 1) : mid_ticks + (lvl + 1);
-        }
+        // Every order is placed passively: 1+ ticks away from the mid on the
+        // order's own side. Nothing is priced through the mid at placement —
+        // crossing happens where the shuffle interleaves orders priced off
+        // separated parts of the walk, and where a modify's one-tick reprice
+        // meets its counterpart at the mid.
+        int64_t px = is_buy ? mid_ticks - (lvl + 1) : mid_ticks + (lvl + 1);
         if (px < 1) px = 1;
 
         news.push_back({ uint8_t(is_buy ? 0 : 1), px, rng.uniform_int(1, 100), lvl });
     }
 
-    // --- Phase 2: interleave buys/sells, expand the cancel/modify lifecycle --
-    std::vector<size_t> order(count);
-    std::iota(order.begin(), order.end(), 0);
+    // --- Phase 2: shuffle into arrival order, expand the lifecycle -----------
     // Hand-rolled Fisher-Yates on Rng::uniform_int. std::shuffle uses
     // std::uniform_int_distribution internally, whose mt19937 consumption is
     // implementation-defined — libstdc++, libc++, and MSVC produce different
     // shuffles from the same seed, breaking the bit-portability promise. The
     // explicit swap below is identical across stdlibs.
+    std::vector<size_t> order(count);
+    std::iota(order.begin(), order.end(), 0);
     for (size_t i = count - 1; i > 0; --i) {
         uint32_t j = rng.uniform_int(0, static_cast<uint32_t>(i));
         std::swap(order[i], order[j]);
@@ -308,7 +328,7 @@ int main(int argc, char** argv) {
     const char* scenario = argv[1];
     const char* out_path = argv[2];
     size_t   count   = (argc > 3) ? std::strtoull(argv[3], nullptr, 10) : 1000000;
-    uint64_t seed_in = (argc > 4) ? std::strtoull(argv[4], nullptr, 10) : 12345;
+    uint64_t seed_in = (argc > 4) ? std::strtoull(argv[4], nullptr, 10) : DEFAULT_SEED;
 
     const Scenario* sc = nullptr;
     for (const auto& s : SCENARIOS)

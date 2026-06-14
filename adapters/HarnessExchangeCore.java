@@ -9,13 +9,16 @@
  *
  * This class produces the trades; exchange_core_adapter.cpp turns them into the
  * report stream. onNew / onModify write one fill record per trade into the
- * adapter-owned staging buffer and return the fill count; the C++ side reads
- * the buffer, builds the Trade reports, and adds the OrderAck / CancelAck /
- * ModifyAck reports. Modify is cancel + reinsert (see onModify).
+ * adapter-owned staging buffer and return the fill count; onCancel stages the
+ * cancelled order's price in record 0. The C++ side reads the buffer, builds
+ * the Trade reports, and adds the OrderAck / CancelAck / ModifyAck (and
+ * CancelReject / ModifyReject) reports. Modify is cancel + reinsert (see
+ * onModify).
  *
- * The matching logic was verified to produce byte-identical trade output to
- * the other reference engines on the harness's canonical workload. No
- * exchange-core source is patched; see docs/PATCHES.md.
+ * The matching logic was verified to produce byte-identical report output —
+ * the full six-type stream, not only its trades — to the other reference
+ * engines on the harness's canonical workload. No exchange-core source is
+ * patched; see docs/PATCHES.md.
  */
 import exchange.core2.collections.objpool.ObjectsPool;
 import exchange.core2.core.common.*;
@@ -96,14 +99,22 @@ public final class HarnessExchangeCore {
         return writeTrades(cmd.matcherEvent, orderId, seq);
     }
 
-    /** CANCEL. Returns 1 if the order was resting and is now removed, else 0. */
+    /** CANCEL. Returns the cancelled order's side — 1 (bid) or 2 (ask) — with
+     *  its price staged in fill record 0's price field, or 0 if the order was
+     *  not resting. Both come from the engine itself: cancelOrder's native
+     *  id-keyed lookup fills cmd.action with the removed order's side and
+     *  attaches a REDUCE MatcherTradeEvent carrying its price, so the adapter
+     *  needs no order state of its own to echo them. */
     public int onCancel(long orderId) {
         cmd.command      = OrderCommandType.CANCEL_ORDER;
         cmd.orderId      = orderId;
         cmd.uid          = UID;
         cmd.resultCode   = CommandResultCode.VALID_FOR_MATCHING_ENGINE;
         cmd.matcherEvent = null;
-        return book.cancelOrder(cmd) == CommandResultCode.SUCCESS ? 1 : 0;
+        if (book.cancelOrder(cmd) != CommandResultCode.SUCCESS) return 0;
+        // Record 0's price field — the slot the C++ side reads as g_stage[0].price.
+        tradeBuf.putLong(0 * TRADE_SIZE + 8, cmd.matcherEvent.price);
+        return cmd.action == OrderAction.BID ? 1 : 2;
     }
 
     /** MODIFY, handled as cancel + reinsert — the harness modify rule
@@ -125,10 +136,12 @@ public final class HarnessExchangeCore {
     }
 
     /* Walk exchange-core's matcher event chain; write one fill record per TRADE
-     * event into the staging buffer. REJECT (IOC residual) and REDUCE events
-     * carry no trade and are skipped — the adapter derives the IOC-residual
-     * CancelAck itself. The trade price is the resting (maker) order's price,
-     * as exchange-core reports it; this matches the other reference engines.   */
+     * event into the staging buffer. The only non-TRADE event a newOrder chain
+     * can carry is REJECT (an IOC's unfilled residual — or a duplicate-id GTC,
+     * which this workload never sends); it carries no trade and is skipped, and
+     * the adapter derives the IOC-residual CancelAck itself. The trade price is
+     * the resting (maker) order's price, as exchange-core reports it; this
+     * matches the other reference engines.                                     */
     private int writeTrades(MatcherTradeEvent evt, long takerId, long seq) {
         int n = 0;
         for (; evt != null; evt = evt.nextEvent) {
@@ -187,10 +200,18 @@ public final class HarnessExchangeCore {
             long restAsk = id++;
             onNew(restAsk, 0, mid + 1, 10, 1, 0);   // resting sell
             onModify(restBid, 0, mid - 2, 12, 0);   // reprice the resting buy
-            onNew(id++,    0, mid + 1,  7, 0, 0);   // crossing buy -> one trade
-            onCancel(restBid);                       // remove the resting buy
-            onCancel(restAsk);                       // remove the sell's residual
+            // Queries while BOTH sides are populated, so the snapshot walk and
+            // the depthAt scan-hit branch get JIT profiles (not just the
+            // empty-book early-outs).
             if ((i & 15) == 0) { bestBid(); bestAsk(); depthAt(mid - 2, 0); }
+            onNew(id++,    0, mid + 1,  7, 0, 0);   // crossing buy -> one trade
+            onNew(id++,    0, mid + 3, 20, 0, 1);   // IOC buy: fills the ask's
+                                                    //   residual 3, rejects 17 ->
+                                                    //   warms the workload's IOC
+                                                    //   + REJECT-skip path
+            onCancel(restBid);                       // live cancel (side+price echo)
+            onCancel(restAsk);                       // consumed above -> miss path
+            onModify(restAsk, 0, mid + 2, 9, 1);     // stale modify -> miss path
         }
         book = newBook();      // discard the warmed book; start the run clean
         tradeBuf = saved;

@@ -5,7 +5,7 @@ behind `api/matching_engine_api.h`.
 
 Pinned commit: `78e1fb0e0563388456e5030d858ef43d6407bed3`.
 
-This adapter is one of eight worked examples in `additional_references/` —
+This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `discoveries.md` at the
 repository root for the observations the harness produced against this
 snapshot.
@@ -18,8 +18,10 @@ adapter uses `PriceLevelsContig`. Native APIs visible from the adapter:
 - `BookCore::submit_limit(NewOrder)` — synchronous, returns `ExecResult{
   filled, remaining }`.
 - `BookCore::cancel(OrderId)` — returns `bool` (true = found and cancelled).
-- `BookCore::modify(ModifyOrder)` — native modify; the adapter does NOT use it
-  (see *Adapter strategy* below).
+- `BookCore::modify(ModifyOrder)` — native modify: internally erase +
+  cross-match at the new price + tail-enqueue the remainder (i.e. exactly
+  the harness's cancel + reinsert contract); returns `ExecResult{0, 0}` for
+  an unknown id. The adapter uses it directly (see *Adapter strategy*).
 - `IEventLogger` callback interface with `log_new` / `log_fill` / `log_cancel`
   and `on_book_after_event` hooks.
 - `OrderFlags { IOC, FOK, POST_ONLY, STP }` — native IOC.
@@ -30,15 +32,22 @@ matching the harness's wire format; no echo of side/price on cancel.
 ## Adapter strategy
 
 - A `HarnessLogger : IEventLogger` captures every `log_fill` into a Trade
-  report. The seq comes from a thread-local `g_cur_seq` the adapter sets
-  before each `submit_limit` call.
+  report. The seq comes from a global `g_cur_seq` the adapter sets before
+  each engine call.
 - **IOC** delegated to the engine via `NewOrder.flags |= IOC`; the adapter
   emits the harness's `CancelAck` for the residual using
   `o->quantity - r.filled`.
-- **Modify** uses the harness contract (cancel + reinsert) rather than the
-  engine's native in-place `modify()` — the latter would not carry the
-  modify's seq through to crossing fills the way the harness expects.
-- Shadow map for the reject path and CancelAck side/price echo.
+- **Modify** calls the engine's native `modify()` directly — it *is* the
+  harness contract (erase + cross-match + tail-enqueue), with crossing fills
+  stamped by the modify's seq via `g_cur_seq`.
+- **Rejects** are adjudicated by the engine itself: `cancel()`'s `bool` and
+  `modify()`'s `ExecResult{0, 0}` (not-found) decide CancelReject /
+  ModifyReject. The engine's id index erases fully-filled makers at fill
+  time, so cancels of terminal orders reject correctly with no adapter-side
+  liveness tracking.
+- A per-order shadow (a flat vector indexed by the dense harness order id,
+  `oid -> {price, side}`) echoes side/price on CancelAck/ModifyAck — the one
+  payload the engine's API does not return.
 
 ## Build / run
 

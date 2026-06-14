@@ -89,17 +89,21 @@ Adapter behaviour worth recording:
   native modify, because every modify in that workload is a reprice or quantity
   increase (see `docs/METHODOLOGY.md`).
 - **Reject reports** — a cancel or modify of an order that is not resting emits
-  a CancelReject / ModifyReject rather than an ack. `HarnessExchangeCore`'s
-  `onCancel` / `onModify` report whether the order was live; the C++ adapter
-  keeps a small `order_id` → {price, side} map so a genuine CancelAck can echo
-  them.
+  a CancelReject / ModifyReject rather than an ack. The engine itself
+  adjudicates and supplies the echo: `onCancel` returns the removed order's
+  side (1 bid / 2 ask, or 0 for not-resting) straight from the engine's
+  id-keyed `cancelOrder` (`cmd.action`), and stages its price from the
+  engine's REDUCE event; `onModify` returns −1 when the cancel half misses.
+  The adapter keeps no order state of its own.
 - **JVM options** — `-XX:+UseSerialGC -Xms2g -Xmx2g -XX:+AlwaysPreTouch`. A
   fixed, pre-touched 2 GiB heap and a single-threaded collector remove
   heap-resize, page-fault, and GC-pause noise from the measured pass.
-- **JIT warmup** — `engine_init` runs ~100,000 synthetic orders to compile the
-  hot path before the harness begins timing, mirroring exchange-core's own
-  benchmark methodology of explicit warmup passes. The warmed order book is then
-  discarded and a fresh one installed.
+- **JIT warmup** — `engine_init` runs 100,000 synthetic place / modify / IOC /
+  cancel cycles (~900,000 engine calls, including the miss-path rejects and
+  populated-book queries) to compile the hot path before the harness begins
+  timing, mirroring exchange-core's own benchmark methodology of explicit
+  warmup passes. The warmed order book is then discarded and a fresh one
+  installed.
 - **JDK 11** is required: exchange-core's dependency set predates later JDKs.
 
 ## Reproducing

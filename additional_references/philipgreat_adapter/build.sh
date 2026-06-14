@@ -2,7 +2,7 @@
 # Build philipgreat_adapter.so. Installs a stable Rust toolchain into
 # $HOME/.cargo if cargo is not on PATH, clones
 # philipgreat/lighting-match-engine-core at a pinned commit, patches in a
-# one-line library target (the upstream is a binary-only crate), then builds a
+# re-export-only library target (the upstream is a binary-only crate), then builds a
 # single cdylib via cargo into a stable .so at the harness repo root.
 #
 # Override the upstream checkout: ME_PHILIPGREAT_SRC=/path/to/existing/clone.
@@ -139,6 +139,59 @@ for path in sys.argv[1:]:
     open(path, "w", encoding="utf-8").write(src)
     print(f"patched {path}: cancel_order finds the active instance")
 PY
+
+# ----- Source patch: prune must not disown a reinserted same-id order -------
+# prune_bucket_front pops inactive (cancelled / depleted) orders off a
+# bucket's front and removed each popped id from order_map. But every order
+# this loop pops was ALREADY removed from order_map at the moment it became
+# inactive — cancel_order disowns the id up front, and the match loops disown
+# depleted makers as they pop them — so that remove was a no-op EXCEPT when a
+# live order had been reinserted under the same id (cancel + re-add, the
+# standard modify idiom). There it deleted the LIVE order's index entry,
+# leaving the order resting but unanswerable by id: cancels of it spuriously
+# fail and its liquidity keeps matching. Deleting the remove makes order_map
+# hold exactly the resting set. Patched in BOTH books for parity. Idempotent:
+# `git reset --hard` restores pristine sources; the marker guards re-applies.
+for BOOK_SRC in "$SRC/src/orderbook/sparse.rs" "$SRC/src/orderbook/dense.rs"; do
+python3 - "$BOOK_SRC" <<'PY'
+import sys, re
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+marker = "PATCH(philipgreat_adapter): prune keeps reinserted ids owned"
+if marker in src:
+    print(f"{path} already patched (prune)")
+    sys.exit(0)
+needle = re.compile(
+    r"(fn prune_bucket_front\(\n"
+    r"        bucket: &mut OrdersBucket,\n"
+    r"        order_map: &mut AHashMap<u64, \(bool, (?:u64|usize)\)>,\n"
+    r"    \) \{\n)"
+    r"        while matches!\(bucket\.orders\.front\(\), Some\(order\) if !order\.is_active\(\)\) \{\n"
+    r"            let removed = bucket\.orders\.pop_front\(\)\.unwrap\(\);\n"
+    r"            order_map\.remove\(&removed\.order_id\);\n"
+    r"        \}\n"
+)
+repl = (
+    r"\1"
+    "        // PATCH(philipgreat_adapter): prune keeps reinserted ids owned.\n"
+    "        // Every order popped here was already removed from order_map when\n"
+    "        // it became inactive (cancel_order and the match loops disown at\n"
+    "        // that moment), so removing again could only delete the entry of a\n"
+    "        // LIVE order reinserted under the same id — leaving it resting but\n"
+    "        // uncancellable. order_map must hold exactly the resting set.\n"
+    "        let _ = &order_map;\n"
+    "        while matches!(bucket.orders.front(), Some(order) if !order.is_active()) {\n"
+    "            bucket.orders.pop_front();\n"
+    "        }\n"
+)
+new, n = needle.subn(repl, src, count=1)
+if n != 1:
+    sys.stderr.write(f"philipgreat prune patch: anchor not found in {path} (upstream changed?)\n")
+    sys.exit(1)
+open(path, "w", encoding="utf-8").write(new)
+print(f"patched {path}: prune no longer disowns reinserted ids")
+PY
+done
 
 # Cargo.toml in the wrapper crate points at ../../../third_party/... via a
 # relative path. If ME_PHILIPGREAT_SRC overrides that, swap the path for this

@@ -6,9 +6,11 @@
 //! Mirrors the structure of `orderbookrs_adapter`.
 //!
 //! What the engine provides natively (used here):
-//!   - `OrderBook::new(tick_size: Decimal)` — single mutable book, NOT Sync
-//!     (BTreeMap/HashMap + `&mut self` methods), so the adapter holds it
-//!     behind a Mutex driven only by the single matcher thread.
+//!   - `OrderBook::new(tick_size: Decimal)` — single mutable book whose
+//!     mutating API is `&mut self`-only, so a `static` needs interior
+//!     mutability: the adapter owns it in a `ThreadOwned` cell. The single
+//!     matcher thread is the only accessor, and no lock or atomic appears on
+//!     the hot path (same pattern as the philipgreat adapter).
 //!   - `add_limit_order(side, price, qty) -> Result<(OrderId, Vec<Fill>)>` —
 //!     SYNCHRONOUS. Matches the incoming order against the book and rests any
 //!     residual. Returns the fills BY VALUE — so trades are emitted directly
@@ -40,8 +42,10 @@
 //! engine speaks `Decimal` on a tick grid. We construct the book with
 //! tick_size = 1 and pass `Decimal::from(price_ticks)` straight through, so
 //! the engine's price grid IS the harness's integer-tick grid: the round-trip
-//! is exact (no fractional Decimal, no rounding), and `best_bid/ask/depth`
-//! come back as the same integers the harness compares against its baseline.
+//! is exact (no fractional Decimal, no rounding), and `best_bid`/`best_ask`
+//! come back as the same integers the harness compares against its baseline
+//! (depth is answered from the adapter's own integer-keyed index — the engine
+//! has no public depth API).
 //!
 //! Modify contract: the harness defines modify as cancel + reinsert (queue
 //! priority lost). limitbook has no native modify, so the adapter cancels
@@ -52,9 +56,9 @@
 use limitbook::{OrderBook, OrderSide};
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::os::raw::{c_uchar, c_uint, c_void};
-use std::sync::{Mutex, OnceLock};
 
 // =============================================================================
 // Harness ABI mirrors. Layout MUST match api/matching_engine_api.h exactly.
@@ -133,37 +137,77 @@ pub struct MeTransport {
 // Adapter state
 // =============================================================================
 
+// Transport vtable + sink, set in engine_init.
 struct Transport {
     vtable: *const MeTransport,
     sink: *mut c_void,
 }
-// SAFETY: the harness owns both pointers; once engine_init returns they are
-// stable until engine_shutdown, and only the matcher thread touches them.
-unsafe impl Send for Transport {}
-unsafe impl Sync for Transport {}
 
-static TRANSPORT: OnceLock<Transport> = OnceLock::new();
+// Single-thread-owned global. The harness drives every engine_on_* / query_*
+// call from ONE matcher thread (the drainer touches only the transport), so
+// the adapter state needs no synchronization at all. A `static` still
+// requires `Sync`, so this cell provides interior mutability via `UnsafeCell`
+// with the single-thread-ownership invariant documented at each accessor.
+// No lock and no atomic on the hot path — the Rust expression of the C++
+// reference adapters' plain globals (same pattern as the philipgreat adapter).
+struct ThreadOwned<T>(UnsafeCell<Option<T>>);
+// SAFETY: every access is from the single matcher thread; the `Sync` bound
+// exists only to satisfy the `static` requirement, not to permit sharing.
+unsafe impl<T> Sync for ThreadOwned<T> {}
+impl<T> ThreadOwned<T> {
+    const fn new() -> Self {
+        Self(UnsafeCell::new(None))
+    }
+    /// Initialise once, from engine_init, before any other entry point runs.
+    /// SAFETY: single matcher thread, init phase, no other live access.
+    #[inline(always)]
+    unsafe fn init(&self, value: T) {
+        *self.0.get() = Some(value);
+    }
+    /// Mutable borrow of the value (matcher hot path).
+    /// SAFETY: single matcher thread, no reentrancy, `init` ran first — so this
+    /// is the only live borrow. Each entry point calls this once.
+    #[inline(always)]
+    #[allow(clippy::mut_from_ref)]
+    unsafe fn get(&self) -> &mut T {
+        (*self.0.get()).as_mut().unwrap_unchecked()
+    }
+    /// Shared borrow of the value (transport emit + audit-query read paths).
+    /// SAFETY: as `get`, but shared.
+    #[inline(always)]
+    unsafe fn get_ref(&self) -> &T {
+        (*self.0.get()).as_ref().unwrap_unchecked()
+    }
+}
+
+// The harness owns both transport pointers; once engine_init returns they are
+// stable until engine_shutdown, and only the matcher thread pushes reports.
+static TRANSPORT: ThreadOwned<Transport> = ThreadOwned::new();
 
 // Per-order state, keyed by the HARNESS order id. `engine_id` is the id the
 // engine assigned (used to cancel and to translate fills back). `remaining`
-// drives the incremental depth map and the CancelAck/echo quantity. `alive`
-// drives the cancel/modify reject path.
+// drives the incremental depth map and the CancelAck/echo quantity. Presence
+// in the map IS the liveness flag: entries are removed on every terminal
+// transition, so the cancel/modify reject path is simply a map miss.
 #[derive(Copy, Clone)]
 struct OrderState {
     engine_id: u64,
     price: i64,
     side: u8,
     remaining: u32,
-    alive: bool,
 }
 
-// Whole-adapter state behind one Mutex (single matcher thread -> uncontended;
-// the Mutex exists only because limitbook's OrderBook is `&mut`-method-only
-// and therefore not Sync). Bundling everything under one lock keeps the
-// engine, the id maps and the depth index mutually consistent with no
-// lock-ordering questions.
+// Whole-adapter state, owned by the matcher thread (no lock — see
+// ThreadOwned). limitbook's OrderBook mutates through `&mut self` only;
+// single-thread ownership is exactly what it needs. Bundling everything in
+// one cell keeps the engine, the id maps and the depth index mutually
+// consistent.
 struct State {
     book: OrderBook,
+    // Std HashMaps, matching the engine's own id index (its `order_lookup` is
+    // a std HashMap keyed by OrderId) — the adapter does not out-engineer the
+    // engine's container choice, and the engine (per-call Vec, BTreeMap,
+    // Decimal) dominates the profile regardless.
     // harness_oid -> per-order state.
     by_harness: HashMap<u64, OrderState>,
     // engine_oid -> harness_oid, for translating fills back to harness ids.
@@ -172,10 +216,8 @@ struct State {
     // incrementally so engine_query_depth_at is O(1). side: 0 = buy, 1 = sell.
     depth: HashMap<(i64, u8), u64>,
 }
-// SAFETY: only ever reached through the Mutex below, from the matcher thread.
-unsafe impl Send for State {}
 
-static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+static STATE: ThreadOwned<State> = ThreadOwned::new();
 
 #[inline]
 fn side_of(s: u8) -> OrderSide {
@@ -202,7 +244,8 @@ fn price_to_ticks(p: Decimal) -> i64 {
 
 #[inline]
 fn emit(r: &Report) {
-    let t = TRANSPORT.get().expect("transport not initialised");
+    // SAFETY: matcher thread only; TRANSPORT.init ran in engine_init.
+    let t = unsafe { TRANSPORT.get_ref() };
     unsafe {
         // Spin until accepted. Matches the other reference adapters' pattern.
         while ((*t.vtable).push)(t.sink, r as *const Report) == 0 {
@@ -249,6 +292,14 @@ fn apply_fills(
     for f in fills {
         let qty = f.quantity.to_u32().unwrap_or(0);
         let price = price_to_ticks(f.price);
+        // The map can only miss on the engine's documented partial-fill
+        // over-match bug (a maker the engine retains at full size refills
+        // after this adapter already saw it fully consumed and pruned it —
+        // see the README verdict). The raw engine id is emitted then, to
+        // keep the stream deterministic; it may numerically coincide with a
+        // live harness id, but every such report (and any shadow touch it
+        // causes below) occurs strictly after the stream has already
+        // diverged from the consensus.
         let maker_harness = st
             .eng_to_harness
             .get(&f.maker_order_id)
@@ -281,8 +332,6 @@ fn apply_fills(
             if s.remaining > qty {
                 s.remaining -= qty;
             } else {
-                s.remaining = 0;
-                s.alive = false;
                 let eng = s.engine_id;
                 st.by_harness.remove(&maker_harness);
                 st.eng_to_harness.remove(&eng);
@@ -298,25 +347,28 @@ fn apply_fills(
 
 #[no_mangle]
 pub extern "C" fn engine_init(_seed: u64, transport: *const MeTransport, sink: *mut c_void) {
-    TRANSPORT.set(Transport { vtable: transport, sink }).ok();
+    // SAFETY: init phase — the harness has not started delivering messages yet.
+    unsafe { TRANSPORT.init(Transport { vtable: transport, sink }) };
 
     // tick_size = 1: the engine's Decimal price grid coincides with the
     // harness's integer-tick grid (see ticks_to_price / price_to_ticks).
     let book = OrderBook::new(Decimal::ONE).expect("tick size must be positive");
-    STATE
-        .set(Mutex::new(State {
+    // SAFETY: init phase, single thread, no other live access.
+    unsafe {
+        STATE.init(State {
             book,
             by_harness: HashMap::with_capacity(1 << 21),
             eng_to_harness: HashMap::with_capacity(1 << 21),
             depth: HashMap::with_capacity(1 << 16),
-        }))
-        .ok();
+        })
+    };
 }
 
 #[no_mangle]
 pub extern "C" fn engine_shutdown() {
     // Load-once / run-once / dlclose process model: nothing to free explicitly
-    // (OnceLocks live for the process). Mirrors the other reference adapters.
+    // (the ThreadOwned cells live for the process). Mirrors the other
+    // reference adapters.
 }
 
 #[no_mangle]
@@ -344,20 +396,21 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
         o.quantity,
     );
 
-    let mut st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get() };
 
     let (engine_id, fills) = st
         .book
         .add_limit_order(side_of(o.side), ticks_to_price(o.price_ticks), Decimal::from(o.quantity))
         .expect("add_limit_order rejected a workload order");
 
-    // Record the taker's engine->harness mapping BEFORE applying fills (a fill
-    // can reference the taker as a maker only in pathological self-cross cases,
-    // which this workload does not produce — but keeping the map complete is
-    // harmless and cheap).
+    // Record the taker's engine->harness mapping; its position relative to
+    // apply_fills is immaterial (the engine matches only against orders
+    // already resting, so a fill can never reference the taker as maker) —
+    // the entry is recorded here for the rest/cleanup arms below.
     st.eng_to_harness.insert(engine_id, o.order_id);
 
-    let filled = apply_fills(&mut st, &fills, o.sequence_number, o.order_id, o.side);
+    let filled = apply_fills(st, &fills, o.sequence_number, o.order_id, o.side);
     let residual = o.quantity.saturating_sub(filled);
 
     if o.ioc != 0 {
@@ -388,7 +441,6 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
                 price: o.price_ticks,
                 side: o.side,
                 remaining: residual,
-                alive: true,
             },
         );
         *st.depth.entry((o.price_ticks, o.side)).or_insert(0) += residual as u64;
@@ -401,11 +453,12 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
 #[no_mangle]
 pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
     let c = unsafe { &*cancel };
-    let mut st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get() };
 
     let info = st.by_harness.get(&c.order_id).copied();
     match info {
-        Some(s) if s.alive => {
+        Some(s) => {
             match st.book.cancel_limit_order(s.engine_id) {
                 Ok(()) => {
                     emit_ack(
@@ -423,14 +476,18 @@ pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
                     st.eng_to_harness.remove(&s.engine_id);
                 }
                 Err(_) => {
-                    // Engine disagrees with the shadow (filled away in between).
+                    // Defensive: unreachable in lockstep — a shadow-resting
+                    // order is always engine-resting (the engine removes
+                    // makers only via fills, which prune the shadow in the
+                    // same apply_fills call, or via our own cancels). Kept so
+                    // an engine-side surprise degrades to a reject.
                     emit_ack(ME_CANCEL_REJECT, c.sequence_number, c.order_id, 0, 0, 0);
                     st.by_harness.remove(&c.order_id);
                     st.eng_to_harness.remove(&s.engine_id);
                 }
             }
         }
-        _ => {
+        None => {
             emit_ack(ME_CANCEL_REJECT, c.sequence_number, c.order_id, 0, 0, 0);
         }
     }
@@ -439,12 +496,13 @@ pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
 #[no_mangle]
 pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
     let m = unsafe { &*modify };
-    let mut st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get() };
 
     let info = st.by_harness.get(&m.order_id).copied();
     let s = match info {
-        Some(s) if s.alive => s,
-        _ => {
+        Some(s) => s,
+        None => {
             emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
             return;
         }
@@ -452,7 +510,9 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
 
     // Harness modify == cancel + reinsert. Cancel the existing engine order.
     if st.book.cancel_limit_order(s.engine_id).is_err() {
-        // Filled away between the shadow update and now.
+        // Defensive: unreachable in lockstep (same invariant as the cancel
+        // path — a shadow-resting order is always engine-resting). Kept so an
+        // engine-side surprise degrades to a reject.
         emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
         st.by_harness.remove(&m.order_id);
         st.eng_to_harness.remove(&s.engine_id);
@@ -482,7 +542,7 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
         .expect("modify reinsert rejected");
     st.eng_to_harness.insert(engine_id, m.order_id);
 
-    let filled = apply_fills(&mut st, &fills, m.sequence_number, m.order_id, s.side);
+    let filled = apply_fills(st, &fills, m.sequence_number, m.order_id, s.side);
     let residual = m.new_quantity.saturating_sub(filled);
 
     if residual > 0 {
@@ -493,7 +553,6 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
                 price: m.new_price_ticks,
                 side: s.side,
                 remaining: residual,
-                alive: true,
             },
         );
         *st.depth.entry((m.new_price_ticks, s.side)).or_insert(0) += residual as u64;
@@ -508,7 +567,8 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
 
 #[no_mangle]
 pub extern "C" fn engine_query_best_bid() -> i64 {
-    let st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get_ref() };
     match st.book.best_bid() {
         Some(p) => price_to_ticks(p),
         None => i64::MIN,
@@ -517,7 +577,8 @@ pub extern "C" fn engine_query_best_bid() -> i64 {
 
 #[no_mangle]
 pub extern "C" fn engine_query_best_ask() -> i64 {
-    let st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get_ref() };
     match st.book.best_ask() {
         Some(p) => price_to_ticks(p),
         None => i64::MAX,
@@ -526,6 +587,7 @@ pub extern "C" fn engine_query_best_ask() -> i64 {
 
 #[no_mangle]
 pub extern "C" fn engine_query_depth_at(price_ticks: i64, side: c_uchar) -> u64 {
-    let st = STATE.get().unwrap().lock().unwrap();
+    // SAFETY: queries run on the same single matcher thread (see ThreadOwned).
+    let st = unsafe { STATE.get_ref() };
     st.depth.get(&(price_ticks, side)).copied().unwrap_or(0)
 }

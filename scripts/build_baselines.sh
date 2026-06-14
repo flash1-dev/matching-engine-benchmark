@@ -19,7 +19,7 @@
 #
 set -euo pipefail
 
-ENGINE="${1:-all}"
+ENGINES=("${@:-all}")    # one or more of: liquibook quantcup exchange_core all
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TP="$REPO/third_party"
 mkdir -p "$TP"
@@ -100,9 +100,10 @@ find_jdk11() {
     if [ -n "${ME_JDK11:-}" ]; then echo "$ME_JDK11"; return; fi
     local c v
     # Try the conventional naming first, then fall back to anything under
-    # /usr/lib/jvm. Verify each candidate by reading $jdk/release — a
-    # substring match on the path name accepts JDK 21 builds whose version
-    # string contains "11" (e.g. jdk-21.0.11+9).
+    # /usr/lib/jvm. Verify each candidate by reading its $jdk/release file and
+    # requiring JAVA_VERSION to *begin* with "11." (an anchored match) — so a
+    # JDK 21 build like jdk-21.0.11+9 (whose version merely contains "11") is
+    # correctly rejected even though the /usr/lib/jvm/* fallback iterates it.
     for c in /usr/lib/jvm/java-11-openjdk-* /usr/lib/jvm/temurin-11-* \
              /usr/lib/jvm/jdk-11* /usr/lib/jvm/*; do
         [ -x "$c/bin/javac" ] || continue
@@ -160,12 +161,14 @@ build_exchange_core() {
     echo "built: exchange_core_adapter.so + HarnessExchangeCore.class + exchange_core.classpath"
 }
 
-case "$ENGINE" in
-    liquibook)                   build_liquibook ;;
-    quantcup)                    build_quantcup ;;
-    exchange_core|exchange-core) build_exchange_core ;;
-    all)  build_liquibook; build_quantcup; build_exchange_core ;;
-    *) echo "usage: $0 {liquibook|quantcup|exchange_core|all}" >&2; exit 2 ;;
-esac
+for ENGINE in "${ENGINES[@]}"; do
+    case "$ENGINE" in
+        liquibook)                   build_liquibook ;;
+        quantcup)                    build_quantcup ;;
+        exchange_core|exchange-core) build_exchange_core ;;
+        all)  build_liquibook; build_quantcup; build_exchange_core ;;
+        *) echo "usage: $0 {liquibook|quantcup|exchange_core|all} [...]" >&2; exit 2 ;;
+    esac
+done
 
 say "done"

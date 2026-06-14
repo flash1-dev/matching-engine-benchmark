@@ -269,7 +269,7 @@ bool load_workload(const std::string& path, std::vector<WorkloadMsg>& out) {
 /* ========================================================================= */
 int main(int argc, char** argv) {
     std::string engine_arg, baseline, scenario = "normal";
-    uint64_t seed = 12345, count = 1000000;
+    uint64_t seed = 23, count = 1000000;   // 23 = the canonical seed (docs/METHODOLOGY.md)
     int matcher_core = 2, drainer_core = 3;
     bool write_reference = false;
     Mode mode = Mode::PERF;
@@ -330,15 +330,26 @@ int main(int argc, char** argv) {
         }
     }
 
+    // --- validate the scenario name before it reaches a path or the shell ---
+    // scenario is interpolated into a generated filename and the generator
+    // command below; restrict it to a safe set so a crafted --scenario cannot
+    // inject a path component or a shell command.
+    if (scenario.empty() || scenario.find_first_not_of(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+            != std::string::npos) {
+        std::fprintf(stderr,
+            "ERROR: invalid --scenario '%s' (allowed: letters, digits, '_', '-')\n",
+            scenario.c_str());
+        return 1;
+    }
+
     // --- ensure the workload exists -----------------------------------------
-    // The cache key is (scenario, seed, count) — the three inputs the generator
-    // consumes. Putting all three in the filename keeps a per-invocation cache
-    // hit for repeated runs of the same workload (e.g. 10 perf runs of one
-    // challenge) without ever silently reusing a stale workload when --seed or
-    // --count changes between runs.
-    std::string workload_path = "orders_" + scenario +
-                                "_seed" + std::to_string(seed) +
-                                "_count" + std::to_string(count) + ".bin";
+    // Key the workload file on scenario + seed + count so a held-out / private
+    // seed never silently replays a cached canonical workload — the file's
+    // identity must encode everything that determines its bytes. (scenario is
+    // charset-validated above; seed/count are numeric, so this is shell-safe.)
+    std::string workload_path = "orders_" + scenario + "_s" + std::to_string(seed) +
+                                "_n" + std::to_string(count) + ".bin";
     if (!file_exists(workload_path)) {
         std::string cmd = "./generator " + scenario + " " + workload_path + " " +
                           std::to_string(count) + " " + std::to_string(seed);
@@ -369,13 +380,23 @@ int main(int argc, char** argv) {
     drain.queue = queue;
     drain.core = drainer_core;
     // The canonical hash covers every report, so the drainer collects them all;
-    // reserve generously so it never reallocates inside the timed window.
+    // reserve generously so it does not reallocate inside the timed window. This
+    // is a heuristic, not a bound (a sweep-heavy custom workload emits 1 ack + K
+    // trades per crossing order, which can exceed 2 reports/message), so we
+    // capture the reserved capacity and verify it held after the run — a
+    // mid-window reallocation perturbs the throughput and gates the run INVALID.
     drain.collected.reserve(workload.size() * 2 + 1024);
+    const size_t collected_cap0 = drain.collected.capacity();
+
+    // Install the fatal-signal guards BEFORE spawning the drainer or running
+    // any engine-supplied code (the drainer immediately touches the engine's
+    // transport), so a crash in either is reported as a failed run rather than
+    // killing the harness through the unguarded gap.
+    install_guards();
     std::thread drainer(drainer_main, &drain);
 
     // --- run ----------------------------------------------------------------
     bool matcher_pinned = pin_to_core(matcher_core);
-    install_guards();
     eng.init(seed, transport, queue);
     int threads_after_init = current_thread_count();
 
@@ -406,7 +427,14 @@ int main(int argc, char** argv) {
     // Optional engine pre-build: let the engine marshal each message into its
     // native form before the timed window, mirroring the ABI-struct pre-build
     // above — so the timed loop measures matching work alone.
+    // Time the prebuild pass: an honest translation is a small fraction of the
+    // timed matching run, so T_prebuild / T_timed << 1. An engine that hides
+    // matcher work here (pre-matching into a private shadow, then replaying in
+    // the timed call — invisible to the book-empty assert) front-loads the cost
+    // and the ratio climbs past 1. See the prebuild-time bound below.
+    int64_t prebuild_ns = 0;
     if (eng.prebuild) {
+        auto pb0 = std::chrono::steady_clock::now();
         for (size_t i = 0; i < workload.size(); ++i) {
             const PreparedMsg& p = prepared[i];
             const void* m = (p.type == 0) ? static_cast<const void*>(&p.no)
@@ -414,7 +442,22 @@ int main(int argc, char** argv) {
                                           : static_cast<const void*>(&p.md);
             eng.prebuild(p.type, m);
         }
+        prebuild_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now() - pb0).count();
     }
+
+    // Anti-cheat pre-flight: no message has been dispatched yet, so the book
+    // MUST be empty. engine_prebuild is contractually translation-only (marshal
+    // each ABI struct into the engine's native order representation); the book
+    // may come alive only in the timed engine_on_* calls below. An engine that
+    // inserted resting orders during engine_prebuild (or engine_init) — i.e.
+    // pre-matching ahead of the clock to flatter its timed number — leaves a
+    // non-empty book here and is gated INVALID. The query doubles as a
+    // synchronization point for an engine that matches asynchronously.
+    const int64_t pre_bid = eng.query_best_bid();
+    const int64_t pre_ask = eng.query_best_ask();
+    const bool prestart_book_empty =
+        (pre_bid == INT64_MIN && pre_ask == INT64_MAX);
 
     // Dispatch one pre-built message into the engine — the timed hot path.
     auto dispatch = [&](const PreparedMsg& p) {
@@ -479,6 +522,24 @@ int main(int argc, char** argv) {
                    - static_cast<double>(excluded_ns) / 1e9;
     double mps = elapsed > 0 ? workload.size() / elapsed / 1e6 : 0.0;
 
+    // Prebuild-time bound (engines exporting engine_prebuild only). Translation
+    // is a small fraction of matching, so an honest prebuild runs well under the
+    // timed window: T_prebuild / T_timed << 1. A prebuild that rivals the run
+    // has hidden matcher work there (e.g. shadow pre-matching, which the
+    // book-empty assert cannot see). A loud flag fires above WARN; the INVALID
+    // gate trips only when egregious (FAIL) — a level no honest engine reaches,
+    // since it would mean translating slower than matching. docs/ANTI_CHEAT.md.
+    // Generous: an honest prebuild also pays one-time buffer allocation /
+    // page-faulting, which on a fast engine (cheap matching) can approach the
+    // timed cost. A shadow pre-matcher front-loads the whole match and lands
+    // several-fold higher, so the gap is wide.
+    constexpr double PREBUILD_WARN_RATIO = 2.0;   // loud flag
+    constexpr double PREBUILD_FAIL_RATIO = 4.0;   // INVALID gate (egregious)
+    const double prebuild_s     = static_cast<double>(prebuild_ns) / 1e9;
+    const double prebuild_ratio = (eng.prebuild && elapsed > 0.0)
+                                      ? prebuild_s / elapsed : 0.0;
+    const bool prebuild_time_ok = (prebuild_ratio <= PREBUILD_FAIL_RATIO);
+
     // --- correctness --------------------------------------------------------
     std::string computed = compute_canonical_hash(drain.collected);
     std::string expected, status;
@@ -491,12 +552,20 @@ int main(int argc, char** argv) {
     // across scenarios — and a single line is still a valid file.
     auto read_hash_file = [&hash_path]() {
         std::map<std::string, std::string> out;
-        if (!file_exists(hash_path.c_str())) return out;
         FILE* fp = std::fopen(hash_path.c_str(), "rb");
         if (!fp) return out;
-        char h[128], t[128];
-        while (std::fscanf(fp, "%127s %127s", h, t) == 2) {
-            out[t] = h;
+        // Read line by line (fgets, not fscanf) so an over-long or malformed
+        // token cannot desync the stream and hide later valid entries, and
+        // accept an entry only when the hash is exactly 64 lowercase hex chars.
+        char line[512];
+        while (std::fgets(line, sizeof(line), fp)) {
+            char h[256], t[256];
+            if (std::sscanf(line, "%255s %255s", h, t) != 2) continue;
+            std::string hash(h);
+            if (hash.size() != 64 ||
+                hash.find_first_not_of("0123456789abcdef") != std::string::npos)
+                continue;
+            out[t] = hash;
         }
         std::fclose(fp);
         return out;
@@ -506,7 +575,7 @@ int main(int argc, char** argv) {
         mkdir("reference", 0755);
         // canonical_output.txt is the canonical published dump. Don't clobber
         // it on a non-canonical write; capture a per-scenario copy instead.
-        const bool is_canonical = (scenario == "normal" && seed == 12345ULL);
+        const bool is_canonical = (scenario == "normal" && seed == 23ULL);
         const std::string out_path = is_canonical
             ? std::string("reference/canonical_output.txt")
             : std::string("reference/canonical_output_") + scenario + ".txt";
@@ -594,7 +663,12 @@ int main(int argc, char** argv) {
     bool affinity_ok    = matcher_pinned && drainer_pinned;
     bool correctness_ok = (status == "PASS");
     bool audit_ok       = (mode == Mode::PERF) || (audit.ran && audit.passed);
-    bool valid          = correctness_ok && audit_ok && affinity_ok;
+    // The collected-report vector must not have grown past its reservation
+    // during the timed window (capacity only changes on reallocation).
+    bool report_buffer_ok = (drain.collected.capacity() == collected_cap0);
+    bool valid          = correctness_ok && audit_ok && affinity_ok
+                          && prestart_book_empty && prebuild_time_ok
+                          && report_buffer_ok;
 
     // --- report -------------------------------------------------------------
     std::printf("  Messages processed: %zu\n", workload.size());
@@ -620,6 +694,32 @@ int main(int argc, char** argv) {
         std::printf("  Affinity:           matcher=%s, drainer=%s — gating the run INVALID\n",
                     matcher_pinned  ? "OK" : "FAILED",
                     drainer_pinned ? "OK" : "FAILED");
+    if (!report_buffer_ok)
+        std::printf("  Measurement:        report buffer reallocated inside the timed "
+                    "window (%zu reports > %zu reserved) — throughput perturbed; gating "
+                    "the run INVALID\n",
+                    drain.collected.size(), collected_cap0);
+    if (!prestart_book_empty)
+        std::printf("  Anti-cheat:         pre-start book not empty by the API sentinels "
+                    "(best_bid=%lld, best_ask=%lld; expected INT64_MIN / INT64_MAX) — "
+                    "either engine_prebuild rested orders ahead of the timed window "
+                    "(see docs/ANTI_CHEAT.md), or the engine returns a non-standard "
+                    "empty-book sentinel (see api/matching_engine_api.h). Gating the run "
+                    "INVALID\n",
+                    (long long)pre_bid, (long long)pre_ask);
+    if (eng.prebuild) {
+        const double pb_ns_msg = prebuild_s / double(workload.size()) * 1e9;
+        const double tm_ns_msg = elapsed     / double(workload.size()) * 1e9;
+        std::printf("  Pre-build cost:     %.1f ns/msg (%.0f%% of the timed run) "
+                    "— informational\n", pb_ns_msg, prebuild_ratio * 100.0);
+        if (prebuild_ratio > PREBUILD_WARN_RATIO)
+            std::printf("  Anti-cheat:         pre-build ran %.2fx the timed window "
+                        "(%.1f vs %.1f ns/msg) — engine_prebuild must translate, "
+                        "not match (see docs/ANTI_CHEAT.md).%s\n",
+                        prebuild_ratio, pb_ns_msg, tm_ns_msg,
+                        prebuild_time_ok ? " [flag]"
+                                         : " Gating the run INVALID.");
+    }
 
     std::printf("\nCorrectness check:\n");
     if (!expected.empty()) std::printf("  Expected hash: %s\n", expected.c_str());
@@ -643,7 +743,8 @@ int main(int argc, char** argv) {
     mkdir("results", 0755);
     char ts[32];
     std::time_t now = std::time(nullptr);
-    std::strftime(ts, sizeof(ts), "%Y%m%dT%H%M%S", std::localtime(&now));
+    std::tm tmv;
+    std::strftime(ts, sizeof(ts), "%Y%m%dT%H%M%S", localtime_r(&now, &tmv));
     std::string result_path = "results/" + engine_name + "_" + scenario + "_" +
                               mode_name + "_" + ts + ".json";
     FILE* jf = std::fopen(result_path.c_str(), "wb");

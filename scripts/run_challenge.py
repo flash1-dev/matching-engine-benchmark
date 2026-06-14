@@ -179,7 +179,7 @@ def main():
     ap.add_argument("--scenario", default="normal", choices=SCENARIOS)
     ap.add_argument("--all-scenarios", action="store_true",
                     help="run every scenario instead of just one")
-    ap.add_argument("--seed", type=int, help="workload seed (default 12345)")
+    ap.add_argument("--seed", type=int, help="workload seed (default 23, the canonical seed)")
     ap.add_argument("--count", type=int, help="new-order count (default 1000000)")
     ap.add_argument("--perf-runs", type=int, default=DEFAULT_PERF_RUNS,
                     help=f"perf runs per scenario (default {DEFAULT_PERF_RUNS})")

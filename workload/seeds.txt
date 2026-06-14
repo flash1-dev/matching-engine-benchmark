@@ -1,12 +1,17 @@
 # Canonical seed list for the matching-engine benchmark.
 #
 # Every scenario is generated deterministically from (scenario, count, seed).
-# The published correctness hash (reference/correctness_hash.txt) is for the
-# `normal` scenario, 1,000,000 new orders, seed 12345.
+# The published correctness hashes (reference/correctness_hash.txt) are for
+# 1,000,000 new orders at seed 23 — the canonical seed. The seed is a
+# calibration choice: the workload model is the paper benchmark's, and how
+# deep a standing book a run carries is a property of the seed's price-path
+# realisation (see docs/METHODOLOGY.md, "The standing book"). Seed 23 is
+# published because each scenario's realisation carries a resting book
+# representative of the regime the paper's benchmark runs exercised.
 #
 # seed   scenario      role
-12345    normal        canonical (published correctness hash)
-12345    static
-12345    swing-25
-12345    swing-40
-12345    flash-crash
+23       normal        canonical (published correctness hash)
+23       static
+23       swing-25
+23       swing-40
+23       flash-crash

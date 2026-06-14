@@ -31,22 +31,56 @@ The mid-price follows geometric Brownian motion, one step per new order:
 
 `Z` is a standard normal, `sigma` is the scenario's annualised volatility, and
 the step `dt = (swing / sigma)^2 / N` is chosen so the path's typical excursion
-over the run is the scenario's target swing. GBM is a standard construction
-and is not attributed to a single source; for the embedding of GBM into a
-stochastic limit-order-book see [cont2010stochastic].
+over the run is the scenario's target swing. This is the paper benchmark's
+construction, ported verbatim onto the portable RNG. GBM is a standard
+construction and is not attributed to a single source; for the embedding of
+GBM into a stochastic limit-order-book see [cont2010stochastic].
 
 ### Order placement
 
-Each new order is, with probability 0.05, **marketable** — priced 1–4 ticks
-through the mid into the opposite side so it crosses resting liquidity. The
-other 95% **rest**: their distance from the mid is drawn from a power-law depth
-profile (exponent alpha = 2.23) with a Gaussian "hump" about 8 ticks out,
-reproducing the near-touch liquidity concentration of real books. Quantity is
-uniform on [1, 100]. The power-law decay of update intensity per depth level
-(`#updates(ℓ) ∝ ℓ^−β`, `β > 1`) and the roughly exponential decay of resting
-queue length with distance from the touch are the empirical regularities
-documented across [bouchaud2002orderbook; gould2013lob; zovkofarmer2002patience;
+Every new order is placed **passively on its own side of the mid**: its
+distance from the mid is drawn from a power-law depth profile (exponent
+alpha = 2.23) with a Gaussian "hump" about 8 ticks out, reproducing the
+near-touch liquidity concentration of real books. Quantity is uniform on
+[1, 100]. Buy flow is priced along the first half of the mid path and sell
+flow along the second (arrival order is then fully shuffled, so the wire
+stream interleaves the sides) — the paper benchmark's construction. Nothing
+is priced through its own mid at placement; crossing happens where the
+shuffle interleaves orders priced off different parts of the walk, and where
+a modify's one-tick reprice meets its counterpart at the mid. The power-law
+decay of update intensity per depth level (`#updates(ℓ) ∝ ℓ^−β`, `β > 1`)
+and the roughly exponential decay of resting queue length with distance from
+the touch are the empirical regularities documented across
+[bouchaud2002orderbook; gould2013lob; zovkofarmer2002patience;
 cont2010stochastic; munitoke2013queueing].
+
+### The standing book
+
+How deep a resting book a run carries is a property of the price path's
+**realisation**, not of the model: when a realisation's two halves separate,
+part of the early side's resting tail ends up out of the late side's reach
+for the remainder of the session and stands in the book until cancelled — a
+path that straddles its start instead re-sweeps everything it leaves behind.
+The **canonical seed (23)** is a calibration choice: it is published because
+each scenario's realisation carries a standing book representative of the
+regime the paper's own benchmark runs exercised, so an engine pays for its
+resting-order data structures (per-order nodes, level indexes, price trees)
+at realistic occupancy, not just for its message dispatch. Simulated against
+a reference matcher, the canonical workloads (seed 23) carry:
+
+| Scenario | Standing orders (avg / peak) | Standing price levels (avg / peak) | Fills |
+|---|---:|---:|---:|
+| `static` | ~20,900 / ~41,800 | ~60 / ~90 | ~800 |
+| `normal` | ~2,700 / ~5,500 | ~290 / ~330 | ~62,000 |
+| `swing-25` | ~1,300 / ~2,600 | ~830 / ~1,400 | ~67,000 |
+| `swing-40` | ~700 / ~1,400 | ~560 / ~1,000 | ~69,000 |
+| `flash-crash` | ~240 / ~500 | ~210 / ~400 | ~70,000 |
+
+A fixed mid lets the book pile deepest (`static` — nothing ever sweeps it);
+the wider a scenario's swing, the more of the standing tail the shuffled
+crossing flow reaches, so depth thins and the surviving book spreads across
+more price levels as volatility rises. The profile mirrors the paper
+benchmark's own realisations scenario for scenario.
 
 ### Order lifecycle
 
@@ -80,23 +114,39 @@ assigned a dense, 0-based `sequence_number`.
 
 | Scenario | Annualised vol | Target swing | Character |
 |---|---:|---:|---|
-| `static` | 0.00 | 0% | Fixed mid; isolates data-structure cost. Still crosses and trades via the marketable fraction. |
-| `normal` | 0.15 | 2% | Routine intraday session. **Canonical** — the byte-identical three-baseline consensus is anchored on `normal` + seed 12345. |
+| `static` | 0.00 | 0% | Fixed mid; the deepest standing book. Isolates data-structure occupancy cost; trades sparsely (one-tick modify reprices meeting at the mid). |
+| `normal` | 0.15 | 2% | Routine intraday session. **Canonical** — the byte-identical three-baseline consensus is anchored on `normal` at the canonical seed (23). |
 | `swing-25` | 0.50 | 25% | High-volatility day. |
 | `swing-40` | 0.50 | 40% | Stressed market. |
 | `flash-crash` | 0.50 | 60% | Flash-crash dislocation, after documented intraday events such as the May 6, 2010 U.S. equity flash crash. |
 
-Every scenario produces trades; none is insert-only.
+The scenarios sweep two stress axes at once: resting-set occupancy is
+greatest where the path moves least (`static`, then `normal`), and the price
+range the book's level structures must span is greatest where it moves most
+(`flash-crash`'s walk covers tens of thousands of ticks). Every scenario
+produces trades; none is insert-only. The four moving scenarios each fill in
+the tens of thousands; `static` fills sparsely by design — its matching
+pressure is the standing book itself.
 
 ## Determinism
 
-The published correctness hash must be reproducible bit-for-bit on any compiler
-and platform. Only `std::mt19937` is bit-portable across C++ standard libraries
-— `std::normal_distribution`, `std::discrete_distribution`, and the
-distributions inside `std::shuffle` are not. The generator therefore hand-rolls
-every distribution (uniform, normal via Box–Muller, exponential, the power-law
-CDF, and the order-of-arrival shuffle) directly on `std::mt19937`. The same
-`(scenario, count, seed)` yields a byte-identical workload everywhere.
+The workload must reproduce bit-for-bit so the published correctness hash means
+the same thing on every machine. Only `std::mt19937` is bit-portable across C++
+standard libraries — `std::normal_distribution`, `std::discrete_distribution`,
+and the distributions inside `std::shuffle` are not — so the generator
+hand-rolls every distribution (uniform, normal via Box–Muller, exponential, the
+depth-profile CDF, and the order-of-arrival shuffle) directly on `std::mt19937`.
+That makes the RNG word stream and the distribution algorithms identical
+everywhere.
+
+One residual dependency remains: those hand-rolled distributions call libm
+transcendentals (`std::cos` / `exp` / `log` / `pow`), which are not standardized
+to the last bit across libm implementations (glibc, musl, Apple, MSVC). The
+workload reproduces bit-for-bit across mainstream glibc builds — the shipped
+reference was generated on glibc/aarch64 — and the **shipped reference hash is
+the canonical artifact**. On an exotic libm the stream could in principle
+differ; if so, regenerate the reference locally with a trusted baseline
+(`--write-reference`).
 
 `std::mt19937` is seeded by a 32-bit value, so `--seed` accepts values in
 `[0, 2^32 − 1]`. The generator refuses larger seeds rather than silently
@@ -111,16 +161,15 @@ regeneration of `reference/correctness_hash.txt`.)
 
 ## On-disk format
 
-`orders_<scenario>_seed<seed>_count<count>.bin`: a 16-byte header
-`[u64 magic][u32 version][u32 count]` then `count` fixed 40-byte records:
+`orders_<scenario>_s<seed>_n<count>.bin` (keyed on seed and count so a held-out
+seed never reuses a cached workload): a 16-byte header `[u64 magic][u32 version][u32 count]`
+then `count` fixed 40-byte records:
 
     [u8 type][u8 side][u8 ioc][u8 pad][u32 quantity]
     [u64 sequence_number][u64 order_id][i64 price_ticks][i64 reserved]
 
-`type` is 0 = NEW, 1 = CANCEL, 2 = MODIFY. The (scenario, seed, count) triple
-is encoded in the filename so the harness cannot silently reuse a stale
-workload when any of the three inputs change between runs. This file is a
-harness-internal cache; it is not part of the engine ABI.
+`type` is 0 = NEW, 1 = CANCEL, 2 = MODIFY. This file is a harness-internal
+cache; it is not part of the engine ABI.
 
 ## Report stream
 
@@ -182,6 +231,27 @@ eleven). Anti-cheat probing happens on every run, so the perf runs are
 indistinguishable from the audit run to the engine, but only the audit run
 compares the probes — the measured runs are never slowed by the check.
 
+### Order-identifier resolution
+
+Every cancel, modify, and fill names an order by its client order id, so on
+each one the engine — or its adapter — must resolve that id to the engine's own
+internal order, a lookup on the hot path. Where that resolution lives differs
+by engine: one whose public API takes the client id directly (FlashOne,
+Exchange-core) resolves it internally, while one that returns its own handle on
+insert (Liquibook, QuantCup) has the adapter hold the id→handle map (each
+adapter README documents its mapping). To keep the lookup apples-to-apples —
+and not penalise an engine that allocates its order table statically, the way
+QuantCup indexes a flat price array directly — the adapters do their half of
+the translation with flat-array direct indexing (a vector indexed by order id;
+no lock, no per-message allocation) rather than a general hash map.
+
+This also mirrors real order-entry protocols: a session assigns increasing,
+dense order identifiers — the sequential UserRefNum discipline of Nasdaq
+OUCH 5.0 — and the harness's ids follow it exactly, so a direct index by order
+id is both the fastest structure and the one a production gateway would use. An
+id outside the live range resolves to "not resting" (a CancelReject or
+ModifyReject), so the scheme never trades correctness for speed.
+
 ## Correctness
 
 Correctness is verified over the engine's **whole output stream** — every
@@ -199,12 +269,13 @@ type; the leading field is the `me_report_type_t` value:
 
 joined by `\n` with no trailing newline. The SHA-256 of those UTF-8 bytes is
 the correctness hash. `reference/correctness_hash.txt` holds a published hash
-for every scenario at seed 12345 (one `<sha256>  <tag>` line per scenario);
+for every scenario at the canonical seed 23 (one `<sha256>  <tag>` line per scenario);
 `reference/canonical_output.txt.gz` is the exact text that hashes to the
-canonical `normal` + seed 12345 entry (gzip-compressed; decompress with
-`gunzip -k` or regenerate via `./harness --scenario normal --mode audit
+canonical `normal` + seed 23 entry (gzip-compressed; decompress with
+`gunzip -k` or regenerate via `./harness --baseline liquibook --scenario normal
 --write-reference`). The other four scenarios' canonical-output texts are not
-shipped — regenerate them locally with `--write-reference --scenario <name>`.
+shipped — regenerate them locally with `./harness --baseline liquibook
+--scenario <name> --write-reference`.
 
 Sorting by `(sequence_number, type)` makes the canonical form independent of
 the order in which an engine emits one message's reports — an engine that emits
@@ -217,8 +288,8 @@ cancelled / modified order is gone.
 
 The published hash is the **byte-identical consensus of three independent
 public engines** — Liquibook [liquibook], QuantCup [quantcupPTME], and
-Exchange-core [exchangecore]. On `normal` + seed 12345 all three agree on the
-entire report stream — 71,851 trades among ~2.21M reports. Three unrelated
+Exchange-core [exchangecore]. On `normal` at seed 23 all three agree on the
+entire report stream — 62,474 trades among ~2.2M reports. Three unrelated
 codebases agreeing makes the reference credible and free of any single engine's
 bias. See `docs/PATCHES.md` for how each baseline is built — each has been
 corrected for documented defects and trade-price-convention mismatches.

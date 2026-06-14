@@ -46,7 +46,7 @@ sed -i 's/std::vector<const std::string>/std::vector<std::string>/g' \
     "$SRC/exchange.h" "$SRC/bookmap.h"
 
 cd "$DIR"
-g++ -std=c++20 -O3 -march=native -fPIC -shared -fno-permissive \
+g++ -std=c++20 -O3 -march=native -fPIC -shared \
     -I"$SRC" -I"$FIXED" -I"$REPO/api" \
     -o "$REPO/robaho_adapter.so" \
     robaho_adapter.cpp \

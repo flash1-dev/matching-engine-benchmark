@@ -4,7 +4,8 @@ Wraps [solarpx/limitbook](https://github.com/solarpx/limitbook) behind
 `api/matching_engine_api.h`.
 
 Pinned commit: `943eadc181d1e35a26abaa5217eeb32bf3304267` (`limitbook 0.1.0`,
-Apache-2.0; depends on `rust_decimal 1.37.x` and `eyre 0.6.x` from crates.io).
+Apache-2.0; depends on `rust_decimal` (declared `1.37.2`) and `eyre 0.6.x`
+from crates.io).
 
 This adapter is one of the worked examples in `additional_references/` — none
 are baselines and none are maintained. See `discoveries.md` at the repository
@@ -75,12 +76,16 @@ engine's "price must be positive" guard is never tripped.)
 - **Modify** is the harness contract — cancel + reinsert, queue priority lost:
   cancel through the engine, emit one `ModifyAck` at the new price/qty, re-add
   as a new limit so crossing fills emit tagged with the modify's seq.
-- A shadow `harness_id -> {engine_id, price, side, remaining, alive}` drives the
+- A shadow `harness_id -> {engine_id, price, side, remaining}` drives the
   cancel/modify reject paths and the CancelAck/ModifyAck side+price echo,
-  mirroring the other reference adapters.
-- The whole adapter (engine + both id maps + depth index) sits behind one
-  `Mutex`, contended only by the single matcher thread — present solely because
-  the engine's `OrderBook` is `&mut`-method-only and therefore not `Sync`.
+  mirroring the other reference adapters. Presence in the map is the liveness
+  flag: entries are removed on every terminal transition.
+- The whole adapter (engine + both id maps + depth index) lives in one
+  single-thread-owned `UnsafeCell` cell (the `ThreadOwned` idiom shared with
+  the philipgreat adapter): the matcher thread is the only accessor, so no
+  lock and no atomic appears on the hot path. The cell exists because the
+  engine's `OrderBook` mutates through `&mut self` only, and a `static` needs
+  interior mutability.
 
 ## Source patch
 
@@ -119,16 +124,17 @@ limitbook's README advertises:
 Those are single-op in-process Criterion microbenchmarks (no inter-thread
 report emission, no full lifecycle). Under the harness's `normal` scenario
 (1M orders + cancels/modifies/IOC, every report emitted across an inter-thread
-SPSC drainer), the limit-order path measured **≈2.45 M msgs/s** on shared
-cores 84/85 — i.e. at the low end of, and consistent with, the advertised
-3–5 M/s limit-order ceiling once the full report-emission cost is paid. (Clean
-isolated cores will read somewhat higher; re-measure there.)
+SPSC drainer), the limit-order path measured **2.72 M msgs/s** (median of 10
+trials, dedicated cores 82/83) — i.e. at the low end of, and consistent
+with, the advertised 3–5 M/s limit-order ceiling once the full
+report-emission cost is paid.
 
-## Correctness verdict: INVALID (upstream matching bug)
+## Correctness verdict: INVALID — quantity-conservation violation (upstream matching bug)
 
-Both `perf` (report-stream hash) and `audit` (state audit, 154/192 probes
-mismatched the `liquibook` baseline) report **INVALID**. The cause is a genuine
-correctness bug **in limitbook itself**, not in the adapter:
+Both `perf` (report-stream hash) and `audit` (state audit, 155/192 probes
+mismatched the `liquibook` baseline on `normal`) report **INVALID**. The
+cause is a genuine correctness bug **in limitbook itself**, not in the
+adapter:
 
 **Partial fills never decrement the resting (maker) order's quantity.** In
 `src/order_book.rs`, the inner matching loop of `add_limit_order` (and the
@@ -149,13 +155,10 @@ rest BUY 100 @ p;  SELL 30 @ p -> fill 30;  SELL 30 @ p -> fill 30;
 SELL 100 @ p -> fills 100   (a correct book has only 40 left → fills 40)
 ```
 
-First harness divergence (`normal`, seed 12345): at `seq 49` an IOC SELL of 96
-(`oid 542506`) fills the full 96 against resting buy `oid 68368` (which, after
-a modify-reinsert to qty 99 at seq 41 and two partial fills of 35 and 6 at
-seq 42 / 47, should have only **58** left). The canonical baseline fills 58 and
-cancels the IOC residual; limitbook fills 96. This is reproducible in pure
-limitbook (the engine's resting order for 68368 still reports quantity 99 after
-the 35+6 fills).
+First harness divergence (`normal`, canonical seed): resting sell `oid
+889598` (53 shares @ 33881, placed at seq 124) is partially filled for 14
+shares at seq 125 — 39 left. At `seq 147` the consensus fills those
+remaining 39; limitbook — which never decremented the maker — prints **53**.
 
 How it presents across the whole `normal` stream — every symptom follows from
 phantom maker liquidity that is never drained:
@@ -163,11 +166,11 @@ phantom maker liquidity that is never drained:
 | report type   | limitbook | canonical | ratio |
 |---------------|-----------|-----------|-------|
 | OrderAck      | 1,000,000 | 1,000,000 | 1.00× |
-| Trade         |   459,192 |    71,851 | 6.39× (over-matching) |
-| CancelAck     |   521,766 |   927,450 | 0.56× |
-| ModifyAck     |    92,370 |   164,318 | 0.56× |
-| CancelReject  |   383,158 |    40,890 | 9.37× (orders filled away early) |
-| ModifyReject  |    80,661 |     8,713 | 9.26× |
+| Trade         |   268,154 |    62,474 | 4.29× (over-matching) |
+| CancelAck     |   706,100 |   931,363 | 0.76× |
+| ModifyAck     |   125,115 |   164,857 | 0.76× |
+| CancelReject  |   228,157 |    38,131 | 5.98× (orders filled away early) |
+| ModifyReject  |    47,560 |     7,818 | 6.08× |
 
 Strict price-time priority with correct partial-fill accounting is the
 invariant the harness's baseline holds; limitbook at the pinned commit does

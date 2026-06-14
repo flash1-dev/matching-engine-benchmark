@@ -126,6 +126,12 @@ while (!g_transport->push(g_sink, &r)) { /* spin: queue momentarily full */ }
 3. **`engine_flush()` must drain the pipeline** — see §4.3.
 4. Prices are signed integer ticks ($0.005 each). Order ids fit in 32 bits for
    the standard workload; use 64-bit types anyway.
+5. **If you export the optional `engine_prebuild` hook, it may do exactly one
+   thing: translate the ABI struct into your engine's native order *value*
+   (plus, at most, a one-time capacity `reserve`/`resize`).** Allocating the
+   resting node, inserting into the book, running any matching, or populating an
+   id→handle map there hoists matcher work off the clock — the harness detects
+   it and gates the run INVALID. See §4.6.
 
 **Threads are allowed.** Match and report on whatever thread(s) reflect how the
 engine runs in production. The harness records the thread count but never
@@ -181,7 +187,7 @@ user's engine *before* writing the adapter:
   §4.6.
 
 When in doubt, find the closest match in `additional_references/` and read
-its adapter end-to-end before writing yours; the eight examples cover most
+its adapter end-to-end before writing yours; the eleven examples cover most
 real-world combinations of the points above.
 
 ---
@@ -387,8 +393,8 @@ Pick the closest and read it — they are complete, working adapters:
   small shadow map for the audit queries.
 - `adapters/exchange_core_adapter.cpp` + `adapters/HarnessExchangeCore.java` —
   a **JVM** engine reached over JNI (see §4.4).
-- `additional_references/` — eight more worked adapter examples (six C++, one
-  Rust, one Go) wrapping third-party matching engines. Each subdirectory has
+- `additional_references/` — eleven more worked adapter examples (six C++, three
+  Rust, two Go) wrapping third-party matching engines. Each subdirectory has
   its own README; see `additional_references/README.md` for the index and
   `discoveries.md` for the correctness/throughput observations the harness
   produced against them.
@@ -438,7 +444,11 @@ doesn't drift. Worked examples:
   headers for a C++20 conformance fix (`std::vector<const std::string>` →
   `std::vector<std::string>`).
 - `additional_references/tzadiko_adapter/build.sh` — `sed`-patches a
-  Windows-only `localtime_s` call to its POSIX equivalent.
+  Windows-only `localtime_s` call to its POSIX equivalent, and switches the
+  engine's two FillAndKill tail-cancel sites from the locking public
+  `CancelOrder` to its own already-locked `CancelOrderInternal` (as shipped,
+  the tail self-deadlocks on the mutex `AddOrder` already holds the first
+  time an IOC partially fills).
 
 Document each patch in `build.sh`'s comment header and in the adapter's
 README so a reader can audit what changed against upstream.
@@ -449,14 +459,50 @@ Two symbols in `api/matching_engine_api.h` are optional — export only if
 useful, omit otherwise:
 
 - **`engine_prebuild(uint8_t msg_type, const void* msg)`** — the harness
-  calls it once per workload message, in dispatch order, **before** the
-  timed window opens. Lets the engine pre-convert each ABI struct into its
-  native order representation so the measured `engine_on_*` calls dispatch
-  the pre-built form. Worth it when the ABI→native conversion is
-  non-trivial (a few percent of throughput is typical). `adapters/quantcup_
-  adapter.cpp` shows the pattern — it pre-builds a `t_order` per new order
-  into a `g_pre[]` vector and the timed `engine_on_new_order` just indexes
-  the next slot.
+  calls it once per workload message, in dispatch order, **before** the timed
+  window opens. Its **one permitted job is translating the ABI struct into your
+  engine's native order *value***: the field marshaling a real gateway does
+  before handing the matcher a parsed order — copy/scale the price, set
+  side/quantity/flags, pack your id into the native struct. You may also
+  pre-size a fixed-capacity table (a one-time `reserve`/`resize` — the
+  static-allocation parity a flat-array engine gets at init). The timed
+  `engine_on_*` call then takes the pre-built value and does the real work.
+  `adapters/quantcup_adapter.cpp` shows the pattern: prebuild fills a `g_pre[]`
+  of `t_order` **values**, and the timed `engine_on_new_order` passes the next
+  one to `limit()` — which is where the arena slot, the id, and the match all
+  happen. The hoist is worth a few percent when the conversion is non-trivial.
+
+  **Nothing else may happen in prebuild, and the harness enforces it.** Prebuild
+  must **not** allocate the resting order node, insert into the book, run any
+  matching, or populate an id→handle map — each is matcher work that belongs on
+  the clock, and hoisting it would make the timed number a lie. Two guards catch
+  the variances (full detail in `docs/ANTI_CHEAT.md`):
+
+  1. **Book-empty pre-flight.** Right after the prebuild pass and before the
+     clock starts, the harness asserts your book is empty
+     (`engine_query_best_bid() == INT64_MIN` and `engine_query_best_ask() ==
+     INT64_MAX`). If prebuild rested any order, the book is non-empty here →
+     `Anti-cheat: pre-start book NON-EMPTY` → **INVALID**, whatever the hash.
+  2. **Prebuild-time bound.** The harness times the prebuild pass and compares
+     it to the timed run. Honest translation is a small fraction of matching
+     (the baselines land at 0.02–0.53×), so a prebuild that *rivals* the run is
+     the signature of matcher work hidden there — e.g. a "shadow" pre-matcher
+     that matches into a private structure (keeping the queryable book empty to
+     slip past guard 1) and replays cached results on the clock. Above 2× the
+     harness prints a loud `Anti-cheat: pre-build ran N× the timed window` flag;
+     above 4× — a level no honest translation reaches — it gates the run
+     **INVALID**.
+
+  Two practical consequences. **(a)** If your native "order" *is* the
+  heap-resident book node — so building it is itself an allocation, as with a
+  `new`-per-order engine — construct it in the timed `engine_on_*` call, **not**
+  in prebuild; `adapters/liquibook_adapter.cpp` does exactly that (prebuild only
+  pre-sizes; the `SimpleOrder` and its id maps are built on the clock). **(b)**
+  The one variance neither guard can see is order-*independent* work in your own
+  memory — pre-allocating one node per order without resting it leaves the book
+  empty *and* costs about as little as translation. Don't: it breaks the same
+  contract and the adapters are source-auditable. The contract is the rule;
+  the guards are the backstop.
 - **`engine_get_transport(void)`** — return the engine's own SPSC transport
   vtable (`create / push / drain / flush / destroy`) instead of accepting
   the harness default (`boost::lockfree::spsc_queue`). Useful when the
@@ -501,7 +547,7 @@ Notes:
 ```
 
 `reference/correctness_hash.txt` ships a published hash for every scenario at
-seed 12345; `normal` is the canonical three-baseline consensus, so validate
+the canonical seed 23; `normal` is the canonical three-baseline consensus, so validate
 against `normal` first. A `perf` run measures throughput; an `audit` run runs
 the anti-cheat state audit. `scripts/run_challenge.py` drives the full
 protocol — 10 perf runs + 1 audit run per scenario — and prints the median
@@ -524,7 +570,7 @@ If it is not VALID, diagnose with this table:
 | `State audit: FAIL` | `engine_query_*` do not reflect the real book | Implement best-bid / best-ask / depth against the live book; return `INT64_MIN` / `INT64_MAX` when a side is empty. |
 | `engine crashed (fatal signal)` | Adapter bug (segfault) | Check the engine handle is initialised and the transport pointers are saved in `engine_init`. |
 | `Affinity: matcher=FAILED` or `drainer=FAILED` (verdict INVALID despite `Status: PASS`) | The harness couldn't pin the matcher / drainer thread to the requested core | Pass `--matcher-core <N>` and `--drainer-core <M>` with cores that are online on your box. The default 2 / 3 may not exist (small machines) or may not be reachable from the harness's CPU set; pick any two adjacent cores >= 0. |
-| `Status: NO REFERENCE` | The (scenario, seed) pair has no published hash in `reference/correctness_hash.txt` (e.g. a custom seed or scenario) | The five standard scenarios at seed 12345 all have published hashes — if you're seeing NO REFERENCE on `normal + seed 12345`, the reference file is missing or corrupted. On a custom (scenario, seed) the harness has nothing to compare against and the run is reported INVALID; either pick a published (scenario, seed) or add an entry to `reference/correctness_hash.txt` via `./harness --baseline liquibook --scenario <name> --seed <n> --write-reference`. |
+| `Status: NO REFERENCE` | The (scenario, seed) pair has no published hash in `reference/correctness_hash.txt` (e.g. a custom seed or scenario) | The five standard scenarios at the canonical seed 23 all have published hashes — if you’re seeing NO REFERENCE on `normal` at seed 23, the reference file is missing or corrupted. On a custom (scenario, seed) the harness has nothing to compare against and the run is reported INVALID; either pick a published (scenario, seed) or add an entry to `reference/correctness_hash.txt` via `./harness --baseline liquibook --scenario <name> --seed <n> --write-reference`. |
 
 To debug a `Status: FAIL`, the engine's report stream differs from
 `reference/canonical_output.txt.gz` — the canonical text that hashes to the
@@ -533,7 +579,7 @@ reference, one line per report (the per-type line format is in
 other scenarios regenerate locally first:
 
 ```sh
-./harness --baseline liquibook --scenario <scn> --seed 12345 --write-reference
+./harness --baseline liquibook --scenario <scn> --seed 23 --write-reference
 # writes reference/canonical_output_<scn>.txt
 ```
 

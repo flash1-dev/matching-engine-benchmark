@@ -12,9 +12,10 @@
  *   - Synthesises OrderAck / CancelAck / ModifyAck / CancelReject /
  *     ModifyReject above the engine (the engine's MarketHandler callbacks
  *     don't map onto the harness's wire format).
- *   - Tracks a shadow map (oid -> {side, price, alive}) for the reject path
- *     and to echo side/price on CancelAck/ModifyAck. The resting quantity on
- *     CancelAck comes from g_manager->GetOrder() to stay in sync after fills.
+ *   - Gates every cancel/modify on g_manager->GetOrder() — the engine's own
+ *     id index — which also supplies the side/price/qty echoed on CancelAck
+ *     and the side on ModifyAck; GetOrder == nullptr drives CancelReject /
+ *     ModifyReject. The adapter keeps no order state of its own.
  *
  * IOC: CppTrader has native IOC. AddOrder with TIF=IOC matches what it can
  * and discards the rest without resting — no per-fill flag needed; the
@@ -38,7 +39,6 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <unordered_map>
 
 namespace {
 
@@ -49,18 +49,18 @@ void*                 g_sink      = nullptr;
 
 constexpr uint32_t SYMBOL_ID = 1;
 
-struct Shadow {
-    int64_t price;   // last known resting price in ticks
-    uint8_t side;    // 0 = buy, 1 = sell
-    bool    alive;
-};
-std::unordered_map<uint64_t, Shadow> g_shadow;
+/* No adapter-side order state: CppTrader's MarketManager keys every resting
+ * order by id in its own open-addressing hash (pool-allocated nodes), and
+ * GetOrder(id) returns nullptr exactly when an order is not resting (the
+ * engine never keeps zero-leaves orders — fully-filled-on-entry is never
+ * inserted, filled makers / cancels / consumed modifies are erased, IOC never
+ * rests). Cancel/modify decisions and ack field echo all come from GetOrder. */
 
 // Per-call context. Set immediately before the engine call that may produce
 // fills; read by the MarketHandler's onExecuteOrder to attribute every Trade
 // to the aggressor's message seq, and to tally how much the taker has filled.
+// (The taker id itself arrives in the engine's callback.)
 uint64_t g_cur_seq      = 0;
-uint64_t g_cur_taker    = 0;
 uint64_t g_taker_filled = 0;   // running sum of qty filled by the current taker
 
 inline void emit(const me_report_t& r) {
@@ -104,8 +104,8 @@ public:
         r.taker_order_id  = order.Id;
         emit(r);
         g_taker_filled += pending_qty_;
-        // Maker liveness is re-derived from g_manager->GetOrder() at the
-        // shadow access sites — the engine is the source of truth.
+        // Maker liveness lives in the engine's own id index (GetOrder) — the
+        // engine is the source of truth.
         have_maker_ = false;
     }
 
@@ -130,9 +130,8 @@ std::unique_ptr<HarnessHandler> g_handler;
 std::unique_ptr<MarketManager>  g_manager;
 const OrderBook*                g_book = nullptr;
 
-inline void begin_call(uint64_t seq, uint64_t taker_id) {
+inline void begin_call(uint64_t seq) {
     g_cur_seq      = seq;
-    g_cur_taker    = taker_id;
     g_taker_filled = 0;
     g_handler->reset_pairing();
 }
@@ -146,8 +145,6 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport, void* sink)
     g_sink      = sink;
     g_handler   = std::make_unique<HarnessHandler>();
     g_manager   = std::make_unique<MarketManager>(*g_handler);
-    g_shadow.clear();
-    g_shadow.reserve(1u << 21);
 
     // Symbol::Symbol expects char[8] and memcpys 8 bytes — pad to 8.
     const char name[8] = { 'W', 'O', 'R', 'K', 'L', 'D', 0, 0 };
@@ -162,7 +159,6 @@ void engine_shutdown(void) {
     g_book = nullptr;
     g_manager.reset();
     g_handler.reset();
-    g_shadow.clear();
 }
 
 void engine_flush(void) {}
@@ -171,7 +167,7 @@ void engine_on_new_order(const new_order_t* o) {
     emit_ack(ME_ORDER_ACK, o->sequence_number, o->order_id,
              o->side, o->price_ticks, o->quantity);
 
-    begin_call(o->sequence_number, o->order_id);
+    begin_call(o->sequence_number);
 
     const OrderTimeInForce tif = o->ioc ? OrderTimeInForce::IOC : OrderTimeInForce::GTC;
     Order order = (o->side == 0)
@@ -195,56 +191,51 @@ void engine_on_new_order(const new_order_t* o) {
         return;
     }
 
-    // GTC: the engine may have rested the order, or fully filled it on the
-    // way in. Track via shadow so a later cancel/modify of a fully-filled
-    // order rejects (matching the harness "not resting" contract).
-    const Order* resting = g_manager->GetOrder(o->order_id);
-    const bool alive = (resting != nullptr) && (resting->LeavesQuantity > 0);
-    g_shadow[o->order_id] = { o->price_ticks, o->side, alive };
+    // GTC: the engine either rested the order in its own id index or fully
+    // filled it on the way in (in which case it was never inserted). A later
+    // cancel/modify asks GetOrder directly — nothing to record here.
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    auto it = g_shadow.find(c->order_id);
+    // The engine's own id index answers the resting test and supplies the
+    // ack's side/price/qty. Capture them BEFORE DeleteOrder — the node is
+    // pool-released inside it.
     const Order* live = g_manager->GetOrder(c->order_id);
-    if (it == g_shadow.end() || !it->second.alive || live == nullptr) {
+    if (live == nullptr) {
         emit_ack(ME_CANCEL_REJECT, c->sequence_number, c->order_id, 0, 0, 0);
-        if (it != g_shadow.end()) it->second.alive = false;
         return;
     }
-    const uint8_t  side  = it->second.side;
+    const uint8_t  side  = static_cast<uint8_t>(live->Side);
     const int64_t  price = static_cast<int64_t>(live->Price);
     const uint32_t qty   = static_cast<uint32_t>(live->LeavesQuantity);
     g_manager->DeleteOrder(c->order_id);
     emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id, side, price, qty);
-    it->second.alive = false;
 }
 
 void engine_on_modify(const modify_t* m) {
-    auto it = g_shadow.find(m->order_id);
-    if (it == g_shadow.end() || !it->second.alive
-        || g_manager->GetOrder(m->order_id) == nullptr) {
+    // One GetOrder answers the resting test and supplies the ack's side; the
+    // engine's ModifyOrder then does its own (unavoidable) internal lookup.
+    const Order* live = g_manager->GetOrder(m->order_id);
+    if (live == nullptr) {
         emit_ack(ME_MODIFY_REJECT, m->sequence_number, m->order_id, 0, 0, 0);
-        if (it != g_shadow.end()) it->second.alive = false;
         return;
     }
-    const uint8_t side = it->second.side;
+    const uint8_t side = static_cast<uint8_t>(live->Side);
 
-    // Harness contract: ModifyAck precedes crossing trades from the reinsert.
+    // Emit the ModifyAck before the engine call (the side is already in
+    // hand); the canonical stream stable-sorts by (seq, type), so ack/trade
+    // emission order within one message never affects the hash.
     emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
              side, m->new_price_ticks, m->new_quantity);
 
-    begin_call(m->sequence_number, m->order_id);
+    begin_call(m->sequence_number);
 
+    // CppTrader's ModifyOrder natively implements the harness modify contract
+    // (delete + reprice + rematch + re-add); post-modify resting state lives
+    // in the engine's index, so there is nothing to refresh.
     g_manager->ModifyOrder(m->order_id,
                            static_cast<uint64_t>(m->new_price_ticks),
                            static_cast<uint64_t>(m->new_quantity));
-
-    // Refresh the shadow with the post-modify resting state. The engine
-    // (under ModifyOrder + MatchLimit) may have re-rested the order, fully
-    // consumed it, or left a residual. Truth is whatever the engine holds.
-    const Order* resting = g_manager->GetOrder(m->order_id);
-    const bool alive = (resting != nullptr) && (resting->LeavesQuantity > 0);
-    it->second = { m->new_price_ticks, side, alive };
 }
 
 int64_t engine_query_best_bid(void) {

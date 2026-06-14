@@ -15,13 +15,15 @@
 //!   - `SparseOrderBook` — a `BTreeMap<price, OrdersBucket>` per side, with
 //!     *no* range/tick validation (`seed_order`/`match_order` skip it).
 //!
-//! The harness `normal` workload prices span the **entire** `[0, ~4.34e11]`
-//! tick range (GBM mid drift; median ~3.3e5, p90 ~2.2e11 ticks). A dense
-//! `Vec` of 4.34e11 buckets is many terabytes — infeasible. So this adapter
-//! drives the **sparse** book, the only one of the two that can represent the
-//! workload at all. (The advertised throughput number is the *dense* book on
-//! a single-price micro-benchmark, not this order flow, so a collapse versus
-//! the headline is expected and is the point of the measurement.)
+//! The dense book must fix `[base_price, base_price + max_levels)` at
+//! construction time, and engine_init runs before the adapter has seen a
+//! single workload price — any price outside a guessed window would be
+//! silently dropped (`Err(PriceOutOfRange)`, order vanishes, stream
+//! diverges). The sparse book represents any price with no window to guess,
+//! so it is the only faithful binding for an arbitrary workload. (The
+//! advertised throughput number is the *dense* book on a single-price
+//! micro-benchmark, not this order flow, so a collapse versus the headline
+//! is expected and is the point of the measurement.)
 //!
 //! ## What the engine provides natively (used here)
 //!   - `SparseOrderBook::new(tick, base_price, max_levels, trade_cap)`.
@@ -40,7 +42,7 @@
 //! ## Synthesised above the engine (the engine emits none of these in the
 //! harness wire format)
 //!   - OrderAck, CancelAck (incl. IOC-residual), ModifyAck, CancelReject,
-//!     ModifyReject. A shadow map `oid -> {side, price, remaining}` drives the
+//!     ModifyReject. The engine's own pub order_map (side, price) drives the
 //!     reject paths and the side/price echo on acks, mirroring the orderbookrs
 //!     Rust adapter and the C++ adapters.
 //!
@@ -54,14 +56,18 @@
 //! globals. See `ThreadOwned` below.
 //!
 //! Order ids and prices round-trip the harness `u64`/`i64` directly: harness
-//! prices are non-negative ticks (the `normal` workload min is 0), so the
+//! prices are non-negative ticks (the generator clamps them to >= 1), so the
 //! `i64 -> u64` cast for the engine's `u64` price field is lossless.
 
 use lighting_match_engine_core::types::{
     OrderFlags, OrderRequest, OrderSide, PriceType, SparseOrderBook,
 };
 use std::cell::UnsafeCell;
-use std::collections::HashMap;
+// The engine hashes the same u64 order-id keys with ahash (its own choice);
+// the adapter's shadow uses the identical hasher rather than std's slower
+// SipHash default. AHashMap is hashbrown underneath: open addressing, so the
+// with_capacity reserve really does make inserts allocation-free.
+use ahash::AHashMap;
 use std::os::raw::{c_uchar, c_uint, c_void};
 
 // =============================================================================
@@ -169,7 +175,7 @@ impl<T> ThreadOwned<T> {
     unsafe fn get(&self) -> &mut T {
         (*self.0.get()).as_mut().unwrap_unchecked()
     }
-    /// Shared borrow of the value (audit-query read path).
+    /// Shared borrow of the value (transport emit + audit-query read paths).
     /// SAFETY: as `get`, but shared.
     #[inline(always)]
     unsafe fn get_ref(&self) -> &T {
@@ -188,18 +194,14 @@ static TRANSPORT: ThreadOwned<Transport> = ThreadOwned::new();
 // The fixed product id the harness's single book maps to (main.rs uses 7).
 const PRODUCT_ID: u16 = 7;
 
-// Shadow map: per resting order {side, price, remaining}. Drives the reject
-// path and the CancelAck/ModifyAck side/price echo. Maintained from the trades
-// produced by each match (partial fills decrement the maker, full fills remove
-// the entry), exactly like the orderbookrs / C++ reference adapters. An absent
-// id reads as not-resting on the reject paths, so terminal orders are dropped
-// rather than tombstoned — this bounds the map to the live resting set (no
-// unbounded growth past the reserve -> no rehash on multi-million-msg runs).
-struct Shadow {
-    price: i64,
-    side: u8,
-    remaining: u32,
-}
+// Remaining-quantity map (oid -> resting remainder), the ONLY adapter-side
+// per-order datum. The engine's own id tracking — its pub `order_map:
+// AHashMap<u64, (is_buy, price)>`, the very index cancel_order consults —
+// supplies side, price and the reject decision, read directly at the
+// cancel/modify sites; it carries no quantity, so the resting remainder
+// (the CancelAck echo) lives here, maintained from the trades each match
+// produces (partial fills decrement the maker, full fills remove the entry —
+// the map stays bounded to the live resting set).
 
 // Book + shadow map, owned by the matcher thread (no lock — see ThreadOwned).
 // `SparseOrderBook::match_order` takes `&mut self`; the shadow map is mutated
@@ -207,7 +209,7 @@ struct Shadow {
 // the matcher needs both at once.
 struct EngineState {
     book: SparseOrderBook,
-    shadow: HashMap<u64, Shadow>,
+    shadow: AHashMap<u64, u32>,
 }
 static ENGINE: ThreadOwned<EngineState> = ThreadOwned::new();
 
@@ -251,7 +253,7 @@ fn make_order(side: u8, oid: u64, price: i64, qty: u32) -> OrderRequest {
         flags: OrderFlags::default(),
         quantity: qty,
         order_id: oid,
-        // Harness ticks are non-negative (workload min is 0); cast is lossless.
+        // Harness ticks are non-negative (generator clamps to >= 1); lossless.
         price: price as u64,
         submit_time: 0,
         expire_time: 0,
@@ -269,7 +271,7 @@ fn make_order(side: u8, oid: u64, price: i64, qty: u32) -> OrderRequest {
 // maker bookkeeping updated together while the matcher thread owns both.
 fn match_and_emit(
     book: &mut SparseOrderBook,
-    shadow: &mut HashMap<u64, Shadow>,
+    shadow: &mut AHashMap<u64, u32>,
     seq: u64,
     taker_side: u8,
     taker_oid: u64,
@@ -280,13 +282,16 @@ fn match_and_emit(
     // Sparse match_order never returns Err (no range/tick validation).
     let _ = book.match_order(order);
 
+    // Tally the taker's filled quantity in the same pass that emits Trades.
+    let mut filled: u32 = 0;
     for tr in book.last_outcome.trades.iter() {
         // Resting order = maker; taker = the incoming order on `taker_side`.
-        let (maker_oid, _taker) = if taker_side == 0 {
-            // incoming is buy -> taker is the buy leg, maker the sell leg
-            (tr.sell_order_id, tr.buy_order_id)
+        // Resting order = maker: the leg opposite the incoming side. (The
+        // taker leg is the incoming order itself — already in hand.)
+        let maker_oid = if taker_side == 0 {
+            tr.sell_order_id
         } else {
-            (tr.buy_order_id, tr.sell_order_id)
+            tr.buy_order_id
         };
         let r = Report {
             r#type: ME_TRADE,
@@ -302,13 +307,13 @@ fn match_and_emit(
             _reserved3: 0,
         };
         emit(&r);
+        filled += tr.quantity;
 
-        // Maintain the maker's shadow: partial fill decrements, full fill
-        // removes (terminal -> no longer resting). Removing bounds the map to
-        // the live resting set; an absent id reads as not-resting on the reject
-        // paths, identical to the old alive=false sentinel.
+        // Maintain the maker's remainder: partial fill decrements, full fill
+        // removes (terminal -> no longer resting; the engine erases its own
+        // order_map entry in the same match step).
         match shadow.get_mut(&maker_oid) {
-            Some(s) if s.remaining > tr.quantity => s.remaining -= tr.quantity,
+            Some(rem) if *rem > tr.quantity => *rem -= tr.quantity,
             Some(_) => {
                 shadow.remove(&maker_oid);
             }
@@ -317,12 +322,6 @@ fn match_and_emit(
     }
 
     // The taker's resting remainder: total minus everything it filled.
-    let filled: u32 = book
-        .last_outcome
-        .trades
-        .iter()
-        .map(|t| t.quantity)
-        .sum();
     qty.saturating_sub(filled)
 }
 
@@ -341,12 +340,15 @@ pub extern "C" fn engine_init(_seed: u64, transport: *const MeTransport, sink: *
         });
 
         // tick=1, base_price=0 -> the engine's price == harness tick directly,
-        // and sparse skips range/tick checks anyway. trade_cap pre-sizes the
-        // per-call trade Vec; a generous cap avoids reallocations on deep sweeps.
+        // and sparse skips range/tick checks anyway. max_levels is dead config
+        // here (the sparse constructor's parameter is `_max_levels`, unused —
+        // only the dense book windows on it), so 1 is inert. trade_cap
+        // pre-sizes the per-call trade Vec; a generous cap avoids
+        // reallocations on deep sweeps.
         let book = SparseOrderBook::new(1, 0, 1, 4096);
         ENGINE.init(EngineState {
             book,
-            shadow: HashMap::with_capacity(1 << 21),
+            shadow: AHashMap::with_capacity(1 << 21),
         });
     }
 }
@@ -417,17 +419,11 @@ pub unsafe extern "C" fn engine_on_new_order(order: *const NewOrder) {
     // GTC: record resting state for the cancel/modify reject + echo paths.
     // Only insert when something actually rests; if the order fully filled on
     // entry nothing rests, so leave it ABSENT — a later cancel/modify finds no
-    // entry and rejects, identical to the old alive=false sentinel but without
-    // leaking a dead entry into the map.
+    // entry and rejects. Absence IS the not-resting signal; a dead
+    // placeholder entry would adjudicate identically but leak a slot per
+    // fully-filled order.
     if remaining > 0 {
-        st.shadow.insert(
-            o.order_id,
-            Shadow {
-                price: o.price_ticks,
-                side: o.side,
-                remaining,
-            },
-        );
+        st.shadow.insert(o.order_id, remaining);
     }
 }
 
@@ -438,30 +434,28 @@ pub unsafe extern "C" fn engine_on_cancel(cancel: *const CancelMsg) {
     // the only live borrow of ENGINE for the duration of this call.
     let st = unsafe { ENGINE.get() };
 
-    let info = st
-        .shadow
-        .get(&c.order_id)
-        .map(|s| (s.side, s.price, s.remaining));
-
-    match info {
-        Some((side, price, remaining)) => {
-            // Shadow says it should be resting; confirm with the engine.
+    // The engine's own id tracking adjudicates AND supplies the payload: its
+    // pub order_map — the very index cancel_order consults — holds
+    // (is_buy, price) for exactly the resting set. Read it before
+    // cancel_order, which removes the entry. The adapter contributes only
+    // the remaining quantity, which the engine's tracking doesn't carry.
+    // (tick=1, base_price=0 -> the engine price IS the harness tick.)
+    match st.book.order_map.get(&c.order_id).copied() {
+        Some((is_buy, price)) => {
+            let remaining = st.shadow.remove(&c.order_id).unwrap_or(0);
             if st.book.cancel_order(c.order_id) {
                 emit_ack(
                     ME_CANCEL_ACK,
                     c.sequence_number,
                     c.order_id,
-                    side,
-                    price,
+                    if is_buy { 0 } else { 1 },
+                    price as i64,
                     remaining,
                 );
-                // Terminal: drop the shadow entry so the map tracks only the
-                // live resting set.
-                st.shadow.remove(&c.order_id);
             } else {
-                // Engine disagrees (filled away since the last shadow update).
+                // Unreachable: an order_map entry is precisely what
+                // cancel_order needs to succeed.
                 emit_ack(ME_CANCEL_REJECT, c.sequence_number, c.order_id, 0, 0, 0);
-                st.shadow.remove(&c.order_id);
             }
         }
         None => {
@@ -478,15 +472,23 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
     // the only live borrow of ENGINE for the duration of this call.
     let st = unsafe { ENGINE.get() };
 
-    // Absent shadow entry == not currently resting (terminal orders are
-    // removed, never tombstoned) -> reject.
-    let cur_side = match st.shadow.get(&m.order_id) {
-        Some(s) => s.side,
+    // The engine's own id tracking adjudicates and supplies the side that
+    // seeds the reinsert; the old remaining entry is retired here and the
+    // re-match below records the new one.
+    let cur_side = match st.book.order_map.get(&m.order_id).copied() {
+        Some((is_buy, _)) => {
+            if is_buy {
+                0u8
+            } else {
+                1u8
+            }
+        }
         None => {
             emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
             return;
         }
     };
+    st.shadow.remove(&m.order_id);
 
     // Harness modify == cancel + reinsert (queue priority lost). Cancel through
     // the engine; if that succeeds, emit exactly one ModifyAck, then re-submit
@@ -502,10 +504,6 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
             m.new_quantity,
         );
 
-        // Replace the old shadow id: drop it first so the map never carries
-        // both the pre- and post-modify state for this order.
-        st.shadow.remove(&m.order_id);
-
         let remaining = match_and_emit(
             &mut st.book,
             &mut st.shadow,
@@ -519,19 +517,12 @@ pub unsafe extern "C" fn engine_on_modify(modify: *const ModifyMsg) {
         // Re-insert only if the resubmitted residual actually rests; if it
         // fully filled, leave it ABSENT so a later cancel/modify rejects.
         if remaining > 0 {
-            st.shadow.insert(
-                m.order_id,
-                Shadow {
-                    price: m.new_price_ticks,
-                    side: cur_side,
-                    remaining,
-                },
-            );
+            st.shadow.insert(m.order_id, remaining);
         }
     } else {
-        // Shadow thought it was resting but the engine had already removed it.
+        // Unreachable: an order_map entry is precisely what cancel_order
+        // needs to succeed.
         emit_ack(ME_MODIFY_REJECT, m.sequence_number, m.order_id, 0, 0, 0);
-        st.shadow.remove(&m.order_id);
     }
 }
 

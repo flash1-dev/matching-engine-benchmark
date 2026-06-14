@@ -9,10 +9,11 @@
 //     ModifyReject above the engine — the engine's PutOrder callbacks lack
 //     side/price, which the harness wire format requires
 //   - drives the engine's mandatory monotonic token via a per-call counter
-//   - shadow-tracks {oid -> price,side,remaining,alive} for the reject path
-//     and the side/price echo, and as the source of truth for the audit
-//     queries (Bid/Ask on the engine itself would consume the token budget
-//     and can't be called as a "read-only" peek)
+//   - shadow-tracks {oid -> price,side,remaining,alive} for the side/price
+//     echo, and as the source of truth for the audit queries (Bid/Ask on the
+//     engine itself would consume the token budget and can't be called as a
+//     "read-only" peek); rejects are adjudicated by the engine's PutOrder
+//     cancel verdict, not the shadow
 //
 // Modify is cancel + reinsert (the engine has no native modify; this matches
 // the harness contract: fills cross with the modify's seq).
@@ -116,11 +117,11 @@ var (
 	gBook *ob.OrderBook
 	gTok  uint64 // monotonic token for AddOrder/CancelOrder; engine CAS's it
 
-	// Shadow state. The reject path / side+price echo / audit queries all
-	// read from here. Single-threaded matcher, so no mutex needed.
+	// Shadow state. The side+price echo and the audit queries read from
+	// here. Single-threaded matcher, so no mutex needed.
 	gShadow map[uint64]shadowEntry
 
-	// Per-call context PutTrade reads.
+	// Per-call context: PutTrade reads gCurSeq and accumulates into gTakerFill.
 	gCurSeq    uint64
 	gTakerFill uint32
 )
@@ -135,7 +136,8 @@ type shadowEntry struct {
 // ---------------------------------------------------------------------------
 // Decimal conversions.
 //
-// Workload ticks are signed integers in [26920, 64843]. We carry each tick
+// Workload ticks are positive signed integers (the canonical scenarios span
+// [10494, 42817]). We carry each tick
 // as udecimal.New(uint64(tick), 0) which produces internal fp = tick * 10^8.
 // The engine compares fp directly, so a strictly increasing tick mapping is
 // preserved bit-for-bit; d.Int() recovers fp / 10^8 = tick exactly.
@@ -177,29 +179,41 @@ func emit(r *C.me_report_t) {
 	}
 }
 
+// One package-level scratch report, reused for every emission. A pointer
+// passed to a cgo call escapes by default (the compiler must assume C keeps
+// it), so a per-call local would heap-allocate 64 B per report inside the
+// timed window; `#cgo noescape` needs Go >= 1.24, newer than the pinned
+// toolchain. Reuse is safe: the single matcher thread is the only writer and
+// the transport's push() copies the struct by value before returning. Each
+// emitter writes its full field set and zeroes the fields only the other
+// writes, so the pushed bytes equal the old per-call zero-initialised struct
+// exactly (the _reserved fields are never written and stay zero).
+var gRep C.me_report_t
+
 func emitAck(rtype C.uint8_t, seq, oid uint64,
 	side uint8, price int64, qty uint32) {
 
-	var r C.me_report_t
-	r._type = rtype
-	r.sequence_number = C.uint64_t(seq)
-	r.order_id = C.uint64_t(oid)
-	r.side = C.uint8_t(side)
-	r.price_ticks = C.int64_t(price)
-	r.quantity = C.uint32_t(qty)
-	emit(&r)
+	gRep._type = rtype
+	gRep.sequence_number = C.uint64_t(seq)
+	gRep.order_id = C.uint64_t(oid)
+	gRep.side = C.uint8_t(side)
+	gRep.price_ticks = C.int64_t(price)
+	gRep.quantity = C.uint32_t(qty)
+	gRep.maker_order_id = 0
+	gRep.taker_order_id = 0
+	emit(&gRep)
 }
 
 func emitTrade(seq, makerID, takerID uint64, price int64, qty uint32) {
-	var r C.me_report_t
-	r._type = C.uint8_t(C.ME_TRADE)
-	r.sequence_number = C.uint64_t(seq)
-	r.order_id = C.uint64_t(makerID)
-	r.price_ticks = C.int64_t(price)
-	r.quantity = C.uint32_t(qty)
-	r.maker_order_id = C.uint64_t(makerID)
-	r.taker_order_id = C.uint64_t(takerID)
-	emit(&r)
+	gRep._type = C.uint8_t(C.ME_TRADE)
+	gRep.sequence_number = C.uint64_t(seq)
+	gRep.order_id = C.uint64_t(makerID)
+	gRep.side = 0
+	gRep.price_ticks = C.int64_t(price)
+	gRep.quantity = C.uint32_t(qty)
+	gRep.maker_order_id = C.uint64_t(makerID)
+	gRep.taker_order_id = C.uint64_t(takerID)
+	emit(&gRep)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,10 +224,11 @@ func emitTrade(seq, makerID, takerID uint64, price int64, qty uint32) {
 //    matching. We ignore this — engine_on_new_order eagerly emits OrderAck
 //    with the side+price the callback doesn't carry.
 //  - PutTrade(maker, taker, ..., qty, price) per fill.
-//  - PutOrder(MsgCancelOrder, Canceled, ...) once per public CancelOrder
-//    (not for fully-filled makers internally retired during matching).
-//    The harness needs side/price echoed; engine_on_cancel emits CancelAck
-//    itself, so we ignore this callback too.
+//  - PutOrder(MsgCancelOrder, ...) once per public CancelOrder (not for
+//    fully-filled makers internally retired during matching): the engine's
+//    cancel verdict. Recorded into gCancelOK/gCancelQty below — it
+//    adjudicates every cancel and every modify's cancel half; engine_on_cancel
+//    emits the CancelAck itself with the side/price the callback lacks.
 //  - PutOrder(MsgCreateOrder, Rejected, ...) on duplicate-ID / zero-qty /
 //    zero-price / no-matching errors. The canonical workload doesn't
 //    produce these, but we ignore them defensively.
@@ -221,9 +236,25 @@ func emitTrade(seq, makerID, takerID uint64, price int64, qty uint32) {
 
 type harnessHandler struct{}
 
+// The engine's native cancel verdict, recorded here and consumed immediately
+// after each gBook.CancelOrder (the handler fires synchronously inside it on
+// the matcher thread): Canceled = removed (qty = the engine-reported
+// remaining quantity), Rejected(ErrOrderNotExists) = never seen or already
+// terminal. This callback IS the engine's cancel-result API — the adapter
+// adjudicates every cancel (and every modify's cancel half) from it.
+var (
+	gCancelOK  bool
+	gCancelQty uint32
+)
+
 func (h *harnessHandler) PutOrder(m ob.MsgType, s ob.OrderStatus,
 	orderID uint64, qty udecimal.Decimal, err error) {
-	// Synthesised above the engine. Nothing to do here.
+	if m == ob.MsgCancelOrder {
+		gCancelOK = s == ob.Canceled
+		gCancelQty = fromDecQty(qty)
+	}
+	// Create/accept notifications carry no payload the adapter needs; the
+	// OrderAck is synthesised above the engine.
 }
 
 func (h *harnessHandler) PutTrade(makerID, takerID uint64,
@@ -306,7 +337,7 @@ func engine_on_new_order(o *C.new_order_t) {
 	} else {
 		sideT = ob.Sell
 	}
-	flag := ob.FlagType(ob.None)
+	flag := ob.None
 	if o.ioc != 0 {
 		flag = ob.IoC
 	}
@@ -316,14 +347,14 @@ func engine_on_new_order(o *C.new_order_t) {
 		toDecQty(qty), toDecPrice(price), udecimal.Zero, flag)
 
 	filled := gTakerFill
+	var residual uint32
+	if filled < qty {
+		residual = qty - filled
+	}
 
 	if o.ioc != 0 {
 		// IoC residual cancellation: emit a CancelAck for the unfilled
 		// remainder. The engine discards the residual without notifying.
-		var residual uint32
-		if filled < qty {
-			residual = qty - filled
-		}
 		if residual > 0 {
 			emitAck(C.uint8_t(C.ME_CANCEL_ACK), seq, oid, side, price, residual)
 		}
@@ -331,10 +362,6 @@ func engine_on_new_order(o *C.new_order_t) {
 	}
 
 	// GTC: shadow tracks the resting remainder.
-	var residual uint32
-	if filled < qty {
-		residual = qty - filled
-	}
 	gShadow[oid] = shadowEntry{
 		price:     price,
 		side:      side,
@@ -348,18 +375,23 @@ func engine_on_cancel(c *C.cancel_t) {
 	seq := uint64(c.sequence_number)
 	oid := uint64(c.order_id)
 
-	e, ok := gShadow[oid]
-	if !ok || !e.alive {
+	// The engine adjudicates: CancelOrder answers through the notification
+	// handler — Canceled on removal, Rejected(ErrOrderNotExists) for
+	// never-seen and already-terminal ids alike. No adapter pre-check.
+	gTok++
+	gCancelOK = false
+	gBook.CancelOrder(gTok, oid)
+	if !gCancelOK {
 		emitAck(C.uint8_t(C.ME_CANCEL_REJECT), seq, oid, 0, 0, 0)
 		return
 	}
 
-	gTok++
-	gBook.CancelOrder(gTok, oid)
-
+	// Payload echo: side/price from the shadow (the engine's callback
+	// carries neither); the quantity is the engine's own reported remainder.
+	e := gShadow[oid]
 	emitAck(C.uint8_t(C.ME_CANCEL_ACK), seq, oid,
-		e.side, e.price, e.remaining)
-	e.alive = false
+		e.side, e.price, gCancelQty)
+	e.alive = false // audit queries scan alive/remaining
 	gShadow[oid] = e
 }
 
@@ -370,18 +402,16 @@ func engine_on_modify(m *C.modify_t) {
 	newPrice := int64(m.new_price_ticks)
 	newQty := uint32(m.new_quantity)
 
-	e, ok := gShadow[oid]
-	if !ok || !e.alive {
+	// The engine adjudicates the cancel half of cancel + reinsert: Rejected
+	// (never seen / already terminal) maps to ModifyReject. No pre-check.
+	gTok++
+	gCancelOK = false
+	gBook.CancelOrder(gTok, oid)
+	if !gCancelOK {
 		emitAck(C.uint8_t(C.ME_MODIFY_REJECT), seq, oid, 0, 0, 0)
 		return
 	}
-	side := e.side
-
-	// Cancel the resting order, then reinsert at the new price/qty so any
-	// crossing fills carry the modify's seq.
-	gTok++
-	gBook.CancelOrder(gTok, oid)
-	e.alive = false
+	side := gShadow[oid].side // payload echo (engine callback has no side)
 
 	emitAck(C.uint8_t(C.ME_MODIFY_ACK), seq, oid, side, newPrice, newQty)
 

@@ -13,11 +13,14 @@ path = "src/lib.rs"
 
 [dependencies]
 # philipgreat/lighting-match-engine-core. The upstream is a *binary* crate
-# (src/main.rs, no library target), so build.sh patches in a one-line
-# src/lib.rs that re-exports the engine modules; this path dep then links
+# (src/main.rs, no library target), so build.sh patches in a re-export-only
+# src/lib.rs that exposes the engine modules; this path dep then links
 # against that generated library target. Path is filled in / overridden by
 # build.sh (ME_PHILIPGREAT_SRC). Pinned SHA in the README + build.sh.
 lighting-match-engine-core = { path = "../../../third_party/lighting-match-engine-core" }
+# Same hasher the engine itself uses for identical u64 order-id keys (already
+# in the dependency graph via the engine; std SipHash is strictly slower here).
+ahash = "0.8"
 
 # NOTE on build flags (house rule): we add NO profile overrides of our own.
 # The upstream Cargo.toml declares opt-level=3 / lto=fat / codegen-units=1 /

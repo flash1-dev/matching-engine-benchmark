@@ -1,34 +1,38 @@
 /*
  * quantcup_adapter.cpp — matching_engine_api.h backed by QuantCup.
  *
- * QuantCup: https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef
- *   the winning entry of the 2011 QuantCup matching-engine contest — a flat
- *   price-indexed array book.
+ * Upstream: https://github.com/ajtulloch/quantcup-orderbook — a C++/Boost port
+ *   of voyager's winning entry from the 2011 QuantCup matching-engine contest
+ *   (original C gist: https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef)
+ *   — a flat price-indexed array book.
  *
  * Built as a shared library by scripts/build_baselines.sh. Deviations from the
- * upstream QuantCup source are documented in docs/PATCHES.md (the one source
- * patch: executeTrade reports each fill at the resting/maker price, not the
- * aggressor price — standard price-time-priority convention).
+ * upstream source are documented in docs/PATCHES.md (one behavioural change —
+ * executeTrade reports each fill at the resting/maker price, not the aggressor
+ * price, the standard price-time-priority convention; the patch's other hunks
+ * restore the missing contest build skeleton).
  *
- * QuantCup's C API exposes no order-state introspection, so this adapter keeps
+ * QuantCup's API exposes no order-state introspection, so this adapter keeps
  * a light shadow of each order (price/qty/side/alive) — populated purely from
  * QuantCup's own execution() reports and the adapter's own limit()/cancel()
  * calls. The shadow is bookkeeping for liveness + the audit queries; it does no
  * matching of its own.
  *
  * The adapter emits the report stream itself — OrderAck, Trade (from QuantCup's
- * execution() callback), CancelAck (per cancel and per IOC residual), and
- * ModifyAck — into the harness report transport. QuantCup matches synchronously
- * on the calling thread, so engine_flush() is a no-op.
+ * execution() callback), CancelAck (per cancel and per IOC residual), ModifyAck,
+ * and CancelReject / ModifyReject for a cancel or modify of an order that is
+ * not resting — into the harness report transport. QuantCup matches
+ * synchronously on the calling thread, so engine_flush() is a no-op.
  */
-// <cstddef> must precede QuantCup's headers: its constants.h uses size_t
-// without including <cstddef> and only compiles if size_t is already in scope.
+#include <algorithm>
+// <cstddef> must precede QuantCup's headers (engine.h/types.h below): their
+// constants.h uses size_t without including <cstddef> and only compiles if
+// size_t is already in scope.
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <unordered_map>
 #include <vector>
 
 #include "engine.h"
@@ -55,9 +59,18 @@ struct OrderState {
     t_orderid qcid;
 };
 
-std::unordered_map<uint64_t, OrderState> g_orders;   // harness order_id -> state
-std::vector<t_order>                     g_pre;      // pre-built new orders (prebuild)
-size_t                                   g_pre_idx = 0;
+/* Harness order ids are dense and 1-based (a permutation of 1..N_new), so a
+ * flat vector indexed by order_id holds the shadow: no per-insert node
+ * allocation on the timed path (a hash map would malloc a node per resting
+ * new order), and a never-rested id is just a default slot (alive=false) —
+ * the same reject outcome a map miss produced. Sized in engine_init, grown
+ * in engine_prebuild (both untimed). */
+std::vector<OrderState> g_orders;     // harness order_id -> state
+std::vector<t_order>    g_pre;        // pre-built new orders (prebuild)
+size_t                  g_pre_idx = 0;
+std::vector<t_order>    g_pre_modify; // pre-built modify reinserts (prebuild)
+size_t                  g_pre_modify_idx = 0;
+size_t                  g_limit_calls = 0;  // prospective limit() calls (prebuild)
 
 const me_transport_t* g_transport = nullptr;         // harness report transport
 void*                 g_sink      = nullptr;
@@ -84,7 +97,7 @@ void emit_ack(uint8_t type, uint64_t seq, uint64_t order_id,
     push_report(r);
 }
 
-/* The harness order_id (<= ~10^6) is carried in QuantCup's 5-char trader Field
+/* The harness order_id (<= ~10^6) is carried in QuantCup's 4-char trader Field
  * as little-endian bytes so the execution() callback can recover the maker. */
 Field encode_id(uint64_t id) {
     Field f;
@@ -106,9 +119,19 @@ uint64_t decode_id(const Field& f) {
 // stores prices in `t_price` (unsigned short). The canonical workload stays in
 // range, but a custom scenario could walk a price out of t_price — silent
 // modulo-2^16 truncation would corrupt the book invisibly, so we fail loud.
+// The usable domain is [1, t_price_max - 1]: the engine's pricePoints array
+// has t_price_max slots (valid indices stop one short of the max value) and
+// t_price_max itself doubles as its empty-ask sentinel, so the max value is
+// out of bounds on one side and sentinel-colliding on the other.
 constexpr int64_t QC_PRICE_MAX =
-    static_cast<int64_t>(std::numeric_limits<t_price>::max());
+    static_cast<int64_t>(std::numeric_limits<t_price>::max()) - 1;
 constexpr int64_t QC_PRICE_MIN = 1;
+
+/* Bounds-checked flat-vector lookup. nullptr / alive=false both mean "not
+ * resting" — exactly the outcomes a map miss / dead entry produced. */
+inline OrderState* find_order(uint64_t ext_id) {
+    return ext_id < g_orders.size() ? &g_orders[ext_id] : nullptr;
+}
 
 inline void check_qc_price(int64_t price, const char* context) {
     if (price < QC_PRICE_MIN || price > QC_PRICE_MAX) {
@@ -118,6 +141,26 @@ inline void check_qc_price(int64_t price, const char* context) {
             "whose price walk stays in range.\n",
             (long long)price, (long long)QC_PRICE_MIN,
             (long long)QC_PRICE_MAX, context);
+        std::abort();
+    }
+}
+
+/* Arena-capacity guard, the id-space twin of check_qc_price: QuantCup consumes
+ * one monotonically increasing arena slot per limit() call with no bounds
+ * check of its own (order_book.cpp: arenaBookEntries.begin() + (++curOrderID),
+ * pre-increment — so the arena's kMaxNumOrders slots support at most
+ * kMaxNumOrders - 1 calls), and walking past it is silent heap corruption.
+ * Counted in engine_prebuild (untimed); news + modifies is a conservative
+ * upper bound on limit() calls (a rejected modify never reaches limit()). */
+inline void check_qc_arena(void) {
+    if (++g_limit_calls >= static_cast<size_t>(OB::kMaxNumOrders)) {
+        std::fprintf(stderr,
+            "ERROR: workload exceeds QuantCup's arena capacity of %d limit() "
+            "calls (one per new order or modify; engine built with "
+            "kMaxNumOrders=%d — see -DQC_MAX_NUM_ORDERS in "
+            "scripts/build_baselines.sh). QuantCup has no bounds check of its "
+            "own, so we fail loud here instead.\n",
+            OB::kMaxNumOrders - 1, OB::kMaxNumOrders);
         std::abort();
     }
 }
@@ -146,10 +189,10 @@ void execution(t_execution exec) {
 
     if (g_taker_left >= qty) g_taker_left -= qty;
 
-    auto it = g_orders.find(maker_id);          // decrement the maker's shadow
-    if (it != g_orders.end()) {
-        if (it->second.qty > qty) it->second.qty -= qty;
-        else { it->second.qty = 0; it->second.alive = false; }
+    OrderState* s = find_order(maker_id);       // decrement the maker's shadow
+    if (s) {
+        if (s->qty > qty) s->qty -= qty;
+        else { s->qty = 0; s->alive = false; }
     }
 }
 
@@ -160,7 +203,12 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_transport = transport;
     g_sink      = report_sink;
     init();
-    g_orders.reserve(1u << 21);
+    /* resize (not reserve): value-initialises every slot (alive=false) and
+     * faults the pages in, both outside the timed window. engine_prebuild
+     * grows past this if a workload ever uses ids beyond 2M. */
+    g_orders.resize(1u << 21);
+    g_pre.reserve(1u << 21);
+    g_pre_modify.reserve(1u << 21);
 }
 
 void engine_shutdown(void) {
@@ -174,16 +222,37 @@ void engine_flush(void) {}
 /* Pre-build hook: build each new order's native t_order before the timed
  * window, so engine_on_new_order's measured work is the match alone. */
 void engine_prebuild(uint8_t msg_type, const void* msg) {
-    if (msg_type != 0) return;
-    const new_order_t* o = static_cast<const new_order_t*>(msg);
-    check_qc_price(o->price_ticks, "engine_prebuild new_order");
-    t_order qo;
-    qo.symbol = Field{};
-    qo.trader = encode_id(o->order_id);
-    qo.side   = (o->side == 0) ? 0 : 1;
-    qo.price  = static_cast<t_price>(o->price_ticks);
-    qo.size   = o->quantity;
-    g_pre.push_back(qo);
+    if (msg_type == 0) {
+        const new_order_t* o = static_cast<const new_order_t*>(msg);
+        check_qc_price(o->price_ticks, "engine_prebuild new_order");
+        check_qc_arena();
+        t_order qo;
+        qo.symbol = Field{};
+        qo.trader = encode_id(o->order_id);
+        qo.side   = (o->side == 0) ? 0 : 1;
+        qo.price  = static_cast<t_price>(o->price_ticks);
+        qo.size   = o->quantity;
+        g_pre.push_back(qo);
+        if (o->order_id >= g_orders.size())
+            g_orders.resize(std::max<size_t>(g_orders.size() * 2,
+                                             static_cast<size_t>(o->order_id) + 1));
+    } else if (msg_type == 2) {
+        /* Modify is cancel + reinsert: pre-build the reinsert t_order here so
+         * engine_on_modify's measured work is the match alone. Exactly one
+         * entry per modify MESSAGE (consumed unconditionally below). The
+         * price-range guard stays on the timed path's apply branch, so an
+         * out-of-range price on a rejected modify still does not abort —
+         * the cast below is harmless on that path (the entry goes unused). */
+        const modify_t* m = static_cast<const modify_t*>(msg);
+        check_qc_arena();
+        t_order qo;
+        qo.symbol = Field{};
+        qo.trader = encode_id(m->order_id);
+        qo.side   = (m->side == 0) ? 0 : 1;
+        qo.price  = static_cast<t_price>(m->new_price_ticks);
+        qo.size   = m->new_quantity;
+        g_pre_modify.push_back(qo);
+    }
 }
 
 void engine_on_new_order(const new_order_t* o) {
@@ -204,18 +273,18 @@ void engine_on_new_order(const new_order_t* o) {
         }
     } else if (g_taker_left > 0) {
         g_orders[o->order_id] = { o->price_ticks, g_taker_left,
-                                  o->side, true, qcid };
+                                  o->side, true, qcid };   // indexed store, no alloc
     }
 }
 
 void engine_on_cancel(const cancel_t* c) {
-    auto it = g_orders.find(c->order_id);
-    if (it != g_orders.end() && it->second.alive) {
-        cancel(it->second.qcid);
+    OrderState* s = find_order(c->order_id);
+    if (s && s->alive) {
+        cancel(s->qcid);
         emit_ack(ME_CANCEL_ACK, c->sequence_number, c->order_id,
-                 it->second.side, it->second.price, 0);
-        it->second.alive = false;
-        it->second.qty   = 0;
+                 s->side, s->price, 0);
+        s->alive = false;
+        s->qty   = 0;
     } else {
         // Order is not resting — already filled, already cancelled, or never
         // seen (a duplicate/stale cancel). Answer with a reject, not an ack.
@@ -225,27 +294,25 @@ void engine_on_cancel(const cancel_t* c) {
 
 void engine_on_modify(const modify_t* m) {
     g_seq = m->sequence_number;
-    auto it = g_orders.find(m->order_id);
-    if (it != g_orders.end() && it->second.alive) {
+    /* Consume the reinsert t_order pre-built by engine_prebuild. Advance the
+     * index UNCONDITIONALLY — exactly one entry was built per modify message,
+     * so both the reinsert and the reject branch must step it. */
+    const t_order& qo = g_pre_modify[g_pre_modify_idx++];
+    OrderState* s = find_order(m->order_id);
+    if (s && s->alive) {
         check_qc_price(m->new_price_ticks, "engine_on_modify");
-        cancel(it->second.qcid);                   /* cancel + reinsert */
+        cancel(s->qcid);                           /* cancel + reinsert */
 
         g_taker_id   = m->order_id;
         g_taker_left = m->new_quantity;
         g_taker_side = m->side;
 
-        t_order qo;
-        qo.symbol = Field{};
-        qo.trader = encode_id(m->order_id);
-        qo.side   = (m->side == 0) ? 0 : 1;
-        qo.price  = static_cast<t_price>(m->new_price_ticks);
-        qo.size   = m->new_quantity;
         t_orderid qcid = limit(qo);
 
         if (g_taker_left > 0)
-            it->second = { m->new_price_ticks, g_taker_left, m->side, true, qcid };
+            *s = { m->new_price_ticks, g_taker_left, m->side, true, qcid };
         else
-            it->second.alive = false;
+            s->alive = false;
 
         emit_ack(ME_MODIFY_ACK, m->sequence_number, m->order_id,
                  m->side, m->new_price_ticks, m->new_quantity);
@@ -257,26 +324,25 @@ void engine_on_modify(const modify_t* m) {
 
 int64_t engine_query_best_bid(void) {
     int64_t best = INT64_MIN;
-    for (const auto& kv : g_orders)
-        if (kv.second.alive && kv.second.side == 0 && kv.second.price > best)
-            best = kv.second.price;
+    for (const auto& st : g_orders)
+        if (st.alive && st.side == 0 && st.price > best)
+            best = st.price;
     return best;
 }
 
 int64_t engine_query_best_ask(void) {
     int64_t best = INT64_MAX;
-    for (const auto& kv : g_orders)
-        if (kv.second.alive && kv.second.side == 1 && kv.second.price < best)
-            best = kv.second.price;
+    for (const auto& st : g_orders)
+        if (st.alive && st.side == 1 && st.price < best)
+            best = st.price;
     return best;
 }
 
 uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
     uint64_t total = 0;
-    for (const auto& kv : g_orders)
-        if (kv.second.alive && kv.second.side == side &&
-            kv.second.price == price_ticks)
-            total += kv.second.qty;
+    for (const auto& st : g_orders)
+        if (st.alive && st.side == side && st.price == price_ticks)
+            total += st.qty;
     return total;
 }
 

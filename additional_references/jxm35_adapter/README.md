@@ -5,7 +5,7 @@ behind `api/matching_engine_api.h`.
 
 Pinned commit: `b5984aacb1f9a1816855df4942752711866dbfbf`.
 
-This adapter is one of eight worked examples in `additional_references/` —
+This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `discoveries.md` at the
 repository root for the observations the harness produced against this
 snapshot.
@@ -40,9 +40,10 @@ identity cannot be reconstructed through the engine's MD path as shipped.
                              matchedQty, opposingPrice);
   ```
 
-  The hook appends to a thread-local vector that the adapter drains into
-  Trade reports after `AddOrder` returns. Nothing else in the engine source
-  changes; the patch is idempotent and `build.sh` reapplies it on rerun.
+  The hook appends to a global vector (the single matcher thread is the
+  only caller) that the adapter drains into Trade reports after `AddOrder`
+  returns. Nothing else in the engine source changes; the patch is
+  idempotent and `build.sh` reapplies it on rerun.
 
 - Instantiates `OrderBook<mdfeed::NullMarketDataPublisher>` (one of the two
   publishers the engine already explicitly instantiates) and ignores the
@@ -51,13 +52,22 @@ identity cannot be reconstructed through the engine's MD path as shipped.
 - **IOC**: `AddOrder` (residual rests as Limit) → detect residual →
   `RemoveOrder` + emit `CancelAck`.
 
-- **Modify**: explicit cancel (`RemoveOrder`) + emit `ModifyAck` + re-submit at
-  the new price/qty. The crossing trades then carry the modify's seq via the
+- **Modify**: the engine's native `AmendOrder` (its own remove + re-add at
+  the new price/qty, queue priority lost — exactly the harness contract).
+  The crossing trades inside the re-add half carry the modify's seq via the
   hook.
 
-- Shadow map for the reject path and CancelAck/ModifyAck side/price echo.
+- **Rejects**: adjudicated by the engine's own existence API —
+  `ContainsOrder(oid)` gates both cancel and modify.
+
+- A per-order shadow (a flat vector indexed by the dense harness order id,
+  `oid -> {price, side, remaining}`) echoes side/price/qty on
+  CancelAck/ModifyAck — the payload the engine's APIs do not return.
 
 ## Build / run
+
+Requires a C++23 compiler (GCC 13+ / Clang 17+, for `std::expected`) and the
+`{fmt}` library (`libfmt-dev`); `build.sh` also runs a one-line `python3` patch.
 
 ```bash
 bash additional_references/jxm35_adapter/build.sh

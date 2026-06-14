@@ -8,17 +8,18 @@
 // the demo in main.go drains on a separate goroutine. This adapter does NOT
 // use that goroutine: it calls Limit/Cancel synchronously on the matcher
 // thread and drains outputRing inline (RingBuffer.Read spins on an empty
-// ring, so we read writePos/readPos directly instead), translating each
-// OutputEvent into a harness me_report_t that is pushed into the harness
-// transport.
+// ring, so we read writePos/readPos directly instead), turning
+// EXECUTION_EVENTs into harness Trade reports and consuming the rest for
+// their side channels (ORDER_EVENT -> id mapping, CANCEL/REJECT_EVENT ->
+// cancel verdicts).
 //
 // Why the engine source is copied in (not imported): femto_go is `package
-// main`, not an importable library, and its order book, ring buffer and the
-// outputRing field are all unexported. build.sh copies the pinned-SHA engine
-// .go files (everything except main.go and *_test.go) into this directory so
-// they compile together as one `package main`, giving the wrapper direct
-// access to MatchingEngine, Limit/Cancel and outputRing. No engine source is
-// modified.
+// main`, which cannot be imported at all, and the fields the wrapper must
+// reach (`outputRing`, and the ring's `writePos`/`readPos`/`buffer`) are
+// unexported. build.sh copies the pinned-SHA engine .go files (everything
+// except main.go and *_test.go) into this directory so they compile together
+// as one `package main`, giving the wrapper direct access to MatchingEngine,
+// Limit/Cancel and outputRing. No engine source is modified.
 //
 // Two impedance mismatches the adapter bridges:
 //
@@ -26,7 +27,8 @@
 //      its own monotonic OrderID (e.orderID++) per accepted Limit; cancels
 //      take that engine id. The harness supplies its own order_id. The
 //      adapter maps harness_oid <-> engine_oid in both directions — engine ->
-//      harness to translate a trade's maker/taker ids back to harness ids,
+//      harness to translate a trade's maker id back to a harness id (the
+//      taker's harness id is the in-flight call's own parameter),
 //      and harness -> engine to drive Cancel and the modify's cancel step.
 //      The engine id of a new order is read out of the ORDER_EVENT the engine
 //      emits first (rejected orders do NOT consume an engine id, so reading
@@ -141,10 +143,10 @@ import (
 // workload band in the middle of that window with a fixed shift so the map is
 // strictly increasing and injective (matching order is preserved exactly).
 //
-//   engine_price = tick - PRICE_BASE
-//   tick         = engine_price + PRICE_BASE
+//   engine_price = tick - priceBase
+//   tick         = engine_price + priceBase
 //
-// PRICE_BASE is START_MID (167.52 / 0.005 = 33504 ticks) minus the window's
+// priceBase is START_MID (167.52 / 0.005 = 33504 ticks) minus the window's
 // midpoint (8192), so START_MID maps to 8192. The normal band is ~32k..34k
 // ticks, ~1.8k wide, landing well inside [1, 16383]. A tick that would map
 // outside [1, MAX_PRICE_LEVELS-1] is treated as out of range and rejected the
@@ -169,9 +171,10 @@ func fromEnginePrice(p Price) int64 {
 
 // ---------------------------------------------------------------------------
 // Globals — single book, single matcher thread (harness contract). All state
-// is touched only on the matcher thread (engine_on_*), so no synchronisation
-// is needed; the report hand-off to the drainer goes through the harness
-// transport.
+// is touched only on the matcher thread (engine_on_* and the engine_query_*
+// probes, which the harness issues from the same dispatch loop), so no
+// synchronisation is needed; the report hand-off to the drainer goes through
+// the harness transport.
 // ---------------------------------------------------------------------------
 
 var (
@@ -197,6 +200,10 @@ type shadowEntry struct {
 // femto_go uses symbol 0 throughout (the harness workload is a single book).
 const symbol0 Symbol = 0
 
+// TraderID for every order: the engine only echoes it into events, which the
+// adapter ignores — any value works.
+const trader0 TraderID = 1
+
 // ---------------------------------------------------------------------------
 // Report transport.
 // ---------------------------------------------------------------------------
@@ -210,27 +217,39 @@ func emit(r *C.me_report_t) {
 	}
 }
 
+// One package-level scratch report, reused for every emission. A pointer
+// passed to a cgo call escapes by default (the compiler must assume C keeps
+// it), so a per-call local would heap-allocate 64 B per report inside the
+// timed window; `#cgo noescape` needs Go >= 1.24, newer than the pinned
+// toolchain. Reuse is safe: the single matcher thread is the only writer and
+// the transport's push() copies the struct by value before returning. Each
+// emitter writes its full field set and zeroes the fields only the other
+// writes, so the pushed bytes equal the old per-call zero-initialised struct
+// exactly (the _reserved fields are never written and stay zero).
+var gRep C.me_report_t
+
 func emitAck(rtype C.uint8_t, seq, oid uint64, side uint8, price int64, qty uint32) {
-	var r C.me_report_t
-	r._type = rtype
-	r.sequence_number = C.uint64_t(seq)
-	r.order_id = C.uint64_t(oid)
-	r.side = C.uint8_t(side)
-	r.price_ticks = C.int64_t(price)
-	r.quantity = C.uint32_t(qty)
-	emit(&r)
+	gRep._type = rtype
+	gRep.sequence_number = C.uint64_t(seq)
+	gRep.order_id = C.uint64_t(oid)
+	gRep.side = C.uint8_t(side)
+	gRep.price_ticks = C.int64_t(price)
+	gRep.quantity = C.uint32_t(qty)
+	gRep.maker_order_id = 0
+	gRep.taker_order_id = 0
+	emit(&gRep)
 }
 
 func emitTrade(seq, makerID, takerID uint64, price int64, qty uint32) {
-	var r C.me_report_t
-	r._type = C.uint8_t(C.ME_TRADE)
-	r.sequence_number = C.uint64_t(seq)
-	r.order_id = C.uint64_t(makerID)
-	r.price_ticks = C.int64_t(price)
-	r.quantity = C.uint32_t(qty)
-	r.maker_order_id = C.uint64_t(makerID)
-	r.taker_order_id = C.uint64_t(takerID)
-	emit(&r)
+	gRep._type = C.uint8_t(C.ME_TRADE)
+	gRep.sequence_number = C.uint64_t(seq)
+	gRep.order_id = C.uint64_t(makerID)
+	gRep.side = 0
+	gRep.price_ticks = C.int64_t(price)
+	gRep.quantity = C.uint32_t(qty)
+	gRep.maker_order_id = C.uint64_t(makerID)
+	gRep.taker_order_id = C.uint64_t(takerID)
+	emit(&gRep)
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +305,10 @@ func drainTrades(seq, takerHarnessOID uint64) (engineOID uint64, filled uint32) 
 				gShadow[makerHarness] = e
 			}
 		case REJECT_EVENT:
-			// A new order that the engine rejected (only possible here on an
-			// out-of-range price, which the adapter screens before calling).
+			// A new order the engine rejected — cannot happen here: the
+			// adapter screens out-of-range prices before calling, and the
+			// workload never sends qty==0 (the engine's only other reject
+			// cause). Kept defensively.
 		case CANCEL_EVENT:
 			// Not produced by Limit; ignored if it appears.
 		}
@@ -296,8 +317,8 @@ func drainTrades(seq, takerHarnessOID uint64) (engineOID uint64, filled uint32) 
 }
 
 // discardEvents drains and drops whatever the just-finished engine call
-// produced (used for the engine-side Cancel that backs a harness cancel /
-// modify, whose CancelAck the adapter synthesises itself).
+// produced (used for the IOC residual's engine-side Cancel, whose outcome is
+// already known — the residual was just observed resting).
 func discardEvents() {
 	r := gEngine.outputRing
 	for {
@@ -308,6 +329,32 @@ func discardEvents() {
 		}
 		r.readPos = rd + 1
 	}
+}
+
+// cancelOutcome drains the events of a just-issued engine Cancel and returns
+// the engine's own verdict: CANCEL_EVENT = removed, REJECT_EVENT = not
+// resting. The engine zeroes orderIndex[id] on every unlink — cancel and
+// full fill alike — so a once-known id is always safe to ask: a stale id
+// fails the engine's slot==0 self-validation and cannot alias a reused slot.
+func cancelOutcome() bool {
+	ok := false
+	r := gEngine.outputRing
+	for {
+		w := r.writePos
+		rd := r.readPos
+		if w == rd {
+			break
+		}
+		ev := r.buffer[rd&RING_MASK]
+		r.readPos = rd + 1
+		switch ev.eventType {
+		case CANCEL_EVENT:
+			ok = true
+		case REJECT_EVENT:
+			ok = false
+		}
+	}
+	return ok
 }
 
 // ---------------------------------------------------------------------------
@@ -344,8 +391,8 @@ func engine_on_new_order(o *C.new_order_t) {
 	tick := int64(o.price_ticks)
 	qty := uint32(o.quantity)
 
-	// 1. OrderAck (engine fires its own ORDER_EVENT too; we consume that for
-	//    the id mapping but do not turn it into a report).
+	// OrderAck (engine fires its own ORDER_EVENT too; we consume that for
+	// the id mapping but do not turn it into a report).
 	emitAck(C.uint8_t(C.ME_ORDER_ACK), seq, oid, side, tick, qty)
 
 	ep, ok := toEnginePrice(tick)
@@ -366,7 +413,7 @@ func engine_on_new_order(o *C.new_order_t) {
 		sideT = Ask
 	}
 
-	gEngine.Limit(symbol0, sideT, ep, Size(qty), 1)
+	gEngine.Limit(symbol0, sideT, ep, Size(qty), trader0)
 	engineOID, filled := drainTrades(seq, oid)
 
 	var residual uint32
@@ -377,8 +424,9 @@ func engine_on_new_order(o *C.new_order_t) {
 	if o.ioc != 0 {
 		// IoC residual: the engine rests the unfilled remainder (it has no
 		// IoC flag), so we must cancel it back out and report the residual
-		// CancelAck. engineOID is 0 only if the order was rejected (handled
-		// above); here it is always valid.
+		// CancelAck. engineOID is 0 only if the order was rejected — the
+		// screened price (handled above) or a qty==0 the workload never
+		// sends; here it is always valid.
 		if residual > 0 {
 			gEngine.Cancel(OrderID(engineOID))
 			discardEvents()
@@ -389,7 +437,9 @@ func engine_on_new_order(o *C.new_order_t) {
 
 	// GTC: shadow tracks the resting remainder and the engine id (for a later
 	// cancel / modify). Even a fully-filled order is recorded (alive=false) so
-	// a later cancel of it is a CancelReject, not a "never seen".
+	// a later cancel/modify of it is adjudicated by the ENGINE (its
+	// REJECT_EVENT -> CancelReject) rather than short-circuited as never-seen
+	// — the never-seen gate fires only where no engine id exists to ask with.
 	gShadow[oid] = shadowEntry{
 		engineOID: engineOID,
 		price:     tick,
@@ -405,16 +455,23 @@ func engine_on_cancel(c *C.cancel_t) {
 	oid := uint64(c.order_id)
 
 	e, ok := gShadow[oid]
-	if !ok || !e.alive {
+	if !ok || e.engineOID == 0 {
+		// No engine id recorded — the engine cannot be asked (its Cancel is
+		// keyed by its own assigned ids). Never-seen harness ids land here.
 		emitAck(C.uint8_t(C.ME_CANCEL_REJECT), seq, oid, 0, 0, 0)
 		return
 	}
 
+	// The engine adjudicates for every known engine id: CANCEL_EVENT on
+	// removal, REJECT_EVENT for already-terminal ids.
 	gEngine.Cancel(OrderID(e.engineOID))
-	discardEvents()
+	if !cancelOutcome() {
+		emitAck(C.uint8_t(C.ME_CANCEL_REJECT), seq, oid, 0, 0, 0)
+		return
+	}
 
 	emitAck(C.uint8_t(C.ME_CANCEL_ACK), seq, oid, e.side, e.price, e.remaining)
-	e.alive = false
+	e.alive = false // audit queries scan alive/remaining
 	gShadow[oid] = e
 }
 
@@ -426,16 +483,18 @@ func engine_on_modify(m *C.modify_t) {
 	newQty := uint32(m.new_quantity)
 
 	e, ok := gShadow[oid]
-	if !ok || !e.alive {
+	if !ok || e.engineOID == 0 {
 		emitAck(C.uint8_t(C.ME_MODIFY_REJECT), seq, oid, 0, 0, 0)
 		return
 	}
 	side := e.side
 
-	// Cancel the resting order out of the book.
+	// The engine adjudicates the cancel half of cancel + reinsert.
 	gEngine.Cancel(OrderID(e.engineOID))
-	discardEvents()
-	e.alive = false
+	if !cancelOutcome() {
+		emitAck(C.uint8_t(C.ME_MODIFY_REJECT), seq, oid, 0, 0, 0)
+		return
+	}
 
 	// One ModifyAck for the reprice/resize.
 	emitAck(C.uint8_t(C.ME_MODIFY_ACK), seq, oid, side, newTick, newQty)
@@ -458,7 +517,7 @@ func engine_on_modify(m *C.modify_t) {
 	} else {
 		sideT = Ask
 	}
-	gEngine.Limit(symbol0, sideT, ep, Size(newQty), 1)
+	gEngine.Limit(symbol0, sideT, ep, Size(newQty), trader0)
 	engineOID, filled := drainTrades(seq, oid)
 
 	var residual uint32

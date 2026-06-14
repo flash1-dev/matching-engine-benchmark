@@ -57,6 +57,47 @@ window**. `engine_flush()` must not return until every message has been fully
 matched and every report emitted. Any work an engine defers to a background
 thread is therefore still counted — deferring buys nothing.
 
+## Pre-build is translation-only
+
+The optional `engine_prebuild` hook (`api/matching_engine_api.h`) runs once per
+message *before* the timed window, so an engine can marshal each message into
+its native order representation off the clock — modelling the gateway parse a
+real venue does outside the matcher. That hook is the one place an engine could
+cheat by doing **matcher** work early: allocating the resting node, inserting
+into the book, or pre-matching, then replaying a cached result in the timed
+call. The contract forbids it — prebuild may only translate and pre-size static
+capacity — and the harness enforces the visible half: immediately after the
+prebuild pass and before it starts the clock, it asserts the book is empty
+(`engine_query_best_bid() == INT64_MIN` and `engine_query_best_ask() ==
+INT64_MAX`). An engine that rested orders during prebuild is gated INVALID with
+an `Anti-cheat: pre-start book NON-EMPTY` line, regardless of whether the output
+hash matches. `tests/prebuild_insert_cheat.cpp` is the executable
+demonstration: it inserts during prebuild and is caught here in a plain perf
+run.
+
+The book-empty assert catches pre-insertion. It does not catch a *shadow*
+pre-matcher — one that matches into a private structure (leaving the queryable
+book empty) and replays cached results in the timed call. A second guard covers
+that: the harness times the prebuild pass and compares it to the timed run.
+Translation is a small fraction of matching, so an honest prebuild runs well
+under the timed window (Liquibook 0.02x, QuantCup 0.06x, FlashOne 0.53x on
+`normal`); a shadow pre-matcher front-loads the match, so its prebuild rivals or
+exceeds the run. Above 2x the harness prints a loud `Anti-cheat: pre-build ran
+Nx the timed window` flag; above 4x — a level no honest translation reaches — it
+gates the run INVALID. `tests/shadow_prematch_cheat.cpp` is the demonstration:
+it passes the book-empty assert and is caught by the time bound. (The bound
+bites hardest exactly when a cheat succeeds: beating an honest engine needs a
+small timed window, which makes the prebuild/timed ratio large.)
+
+Together the two guards close pre-insertion and pre-matching. What remains is
+order-independent work an engine could hide in its own memory — pre-allocating a
+node per order without resting it leaves the book empty *and* costs about as
+little as translation, so neither guard sees it. That residue is why the
+contract is also a rule engines are expected to honour; the fully robust
+alternative is to retire the hook and translate inside the timed loop (a small,
+uniform cost paid by every engine). The two guards are the cheaper option that
+keeps the matcher-only measurement scope.
+
 ## Random-point state audit
 
 A hardcoded engine could replay the published trades without maintaining an
@@ -77,6 +118,37 @@ seed used is recorded in the result JSON for reproducibility.
 
 Every run probes these points — a perf run just discards the comparison — so an
 engine cannot distinguish a measured run from an audited one.
+
+## Held-out seeds: the strongest test
+
+The shipped reference covers `normal` at the canonical seed 23, and its full
+report stream is published (`reference/canonical_output.txt.gz`) so anyone can
+regenerate and verify the hash. That convenience has a limit a determined cheat
+could exploit: with the canonical output in hand, an engine could *replay* it to
+reproduce the hash, and *reconstruct* the resting book from those same canonical
+trades to answer the state-audit probes — clearing both checks without doing any
+real matching.
+
+The defense is a **held-out seed** the engine's author has no reference for.
+Generate a private reference with a trusted baseline:
+
+```sh
+./harness --baseline liquibook --scenario normal --seed <private-seed> --write-reference
+```
+
+then challenge the engine on it:
+
+```sh
+./harness --engine ./their_engine.so --scenario normal --seed <private-seed> --mode perf
+./harness --engine ./their_engine.so --scenario normal --seed <private-seed> --mode audit
+```
+
+With no public canonical to replay, the only way to produce the correct report
+stream is to actually match the orders, and the only way to answer the audit is
+to actually maintain the book. The shipped seed-23 reference is for convenient
+self-checking and head-to-head reproduction; an adversarial evaluation should
+use a private held-out seed (any 32-bit value works — the workload shape is
+unchanged, only its realisation differs).
 
 ## The engine may use threads
 

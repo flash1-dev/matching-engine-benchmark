@@ -43,44 +43,63 @@ no per-fill callback (trades returned by value).
   maker's price is what the harness records in `ME_TRADE.price_ticks`.
 
 - **OrderAck / CancelAck / ModifyAck / CancelReject / ModifyReject** are
-  synthesised above the engine. A shadow map `oid -> {price, side,
-  remaining, alive}` drives the reject path and the CancelAck/ModifyAck
-  side+price echo. The map is also updated from the fill stream so a
-  fully-filled maker is recorded as not-resting on the next
-  cancel/modify.
+  synthesised above the engine. A per-order shadow `oid -> {price, side,
+  remaining, alive}` — a flat vector indexed by the dense 1-based harness
+  order id, sized in `engine_prebuild` — drives the reject path and the
+  CancelAck/ModifyAck side+price echo. The shadow state is necessary: the
+  engine's `CancelOrder` returns `void` (silent on unknown ids),
+  `ModifyOrder` returns `{}` ambiguously, and no API exposes a resting
+  order's fields. It is updated from the fill stream so a fully-filled
+  maker is recorded as not-resting on the next cancel/modify.
 
-- **IOC**: `OrderType::FillAndKill`. The engine cancels any residual at the
-  tail of `MatchOrders` itself; the adapter detects `residual =
-  quantity - filled` after the call and emits the harness's CancelAck for
-  the unfilled remainder (no second cancel into the engine).
+- **IOC**: `OrderType::FillAndKill`, the engine's own IOC type. The engine
+  cancels any residual at the tail of `MatchOrders` itself — which is
+  exactly the path that self-deadlocks as shipped and that `build.sh`'s
+  third patch fixes (below). The adapter detects `residual = quantity -
+  filled` after the call and emits the harness's CancelAck for the unfilled
+  remainder (no second cancel into the engine).
 
-- **Modify**: the harness contract is cancel + reinsert with the new
-  price/qty, and the crossing trades carrying the modify message's seq.
-  The adapter does this explicitly (`CancelOrder` + `AddOrder`) rather
-  than calling the engine's `ModifyOrder`, so the adapter has full
-  control over the trade-seq attribution.
+- **Modify**: the engine's native `ModifyOrder` — itself cancel + `AddOrder`
+  at the new price/qty, which is exactly the harness contract — with the
+  crossing trades stamped with the modify message's seq. The shadow gate
+  stays in front of it only because the engine cannot adjudicate: a
+  `ModifyOrder` on an unknown id returns `{}`, indistinguishable from a
+  successful non-crossing modify.
 
 - **Audit queries** (`best_bid`, `best_ask`, `depth_at`) are answered from
-  an adapter-side shadow (`std::map<int64_t, uint64_t>` per side) updated
-  from the same fill / ack / cancel stream the adapter already maintains
-  for the reject path. The engine's native `GetOrderInfos()` walks every
-  resting order to aggregate per-level totals (O(N_resting) per call);
-  bypassing it keeps the 192 audit probes cheap.
+  the engine's native `GetOrderInfos()` level snapshot. The snapshot walk is
+  O(N_resting) per call, but the harness excludes probe time from the timed
+  total, so the engine's own answer costs the measurement nothing — where a
+  parallel adapter-side level map would cost sorted-map maintenance on every
+  timed message.
 
 ## Build patches
 
-`build.sh` applies two source-level patches to `Orderbook.cpp`. Both are
+`build.sh` applies three source-level patches to `Orderbook.cpp`. All are
 idempotent (the `git reset --hard` step restores the file before each
 rerun).
 
 1. **`localtime_s` -> `localtime_r`** — `localtime_s` is Win32-only; the
    POSIX equivalent takes the arguments in the opposite order. The call
    sits inside `PruneGoodForDayOrders`, a background thread that sleeps
-   until 16:00 local time and therefore never wakes during the run.
+   until 16:00 local time.
 
 2. **Drop `trades.reserve(orders_.size())` from `MatchOrders`** — removes
    a per-match O(orders_) allocation hint with no semantic effect on the
    output stream. See `discoveries.md` for context.
+
+3. **`CancelOrder` -> `CancelOrderInternal` at the two `MatchOrders` tail
+   sites** — a correctness fix, not a performance one. The tail cancels a
+   partially-filled FillAndKill residual by calling the *public*
+   `CancelOrder` while `AddOrder` still holds the book's non-recursive
+   `ordersMutex_` — a guaranteed self-deadlock the first time a FillAndKill
+   order partially fills, so the engine's own IOC type cannot execute as
+   shipped. The engine already provides the already-locked variant
+   (`CancelOrderInternal`, what its bulk `CancelOrders` uses under its own
+   lock); the patch switches the only two locked-context callers to it.
+   Trades and end-of-call book state are identical to what an un-deadlocked
+   public cancel would produce. See `discoveries.md` for the full account
+   (including the correction of this engine's earlier `infeasible` verdict).
 
 ## Build / run
 
@@ -91,7 +110,7 @@ bash additional_references/tzadiko_adapter/build.sh
 ```
 
 `build.sh` clones the engine into `third_party/Tzadiko_Orderbook/` at the
-pinned commit and applies the two patches above. Use
+pinned commit and applies the three patches above. Use
 `ME_TZADIKO_SRC=/path/to/checkout` to skip the clone (the script still
 applies the patches to your checkout — `git reset --hard` first if you
 want to undo).

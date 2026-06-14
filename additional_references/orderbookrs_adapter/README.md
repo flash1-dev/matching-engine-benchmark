@@ -21,13 +21,12 @@ visible from the adapter:
 - `OrderBook::add_limit_order(id, price, qty, side, TimeInForce, extra)` —
   matches the incoming order and rests any residual. Returns `Result<Arc<Order>,
   OrderBookError>`.
-- `OrderBook::cancel_order(id)` — returns `Ok(Some(_))` when found,
-  `Ok(None)` when not.
+- `OrderBook::cancel_order(id)` — returns `Ok(Some(removed_order))` when
+  found (carrying the order's side, price, and live remaining quantity) and
+  `Ok(None)` when not resting.
 - `OrderBook::best_bid()` / `best_ask()` — `Option<u128>`.
 - `OrderBook::levels_in_range(min, max, side)` — iterator over `LevelInfo`
   used for exact-price depth queries.
-- `OrderBook::get_order(id)` — `Option<Arc<OrderType>>` for reading the resting
-  quantity back after a match.
 
 Native order ids are `pricelevel::Id` — a 3-variant enum (`Uuid` / `Ulid` /
 `Sequential(u64)`). `Sequential` round-trips a u64 losslessly via `as_u64()`,
@@ -35,9 +34,8 @@ so the harness's `uint64_t` order ids carry through trade callbacks without a
 sidecar map.
 
 Native order types include Iceberg, Post-Only, FOK, IOC, GTC, GTD, and trailing
-stops; this adapter uses GTC only and synthesises the harness's IOC residual
-behavior in the adapter (so report ordering is deterministic regardless of how
-the engine decomposed any fills).
+stops; the adapter maps harness IOC onto the engine's native
+`TimeInForce::Ioc` and GTC onto `TimeInForce::Gtc`.
 
 Not provided natively: no OrderAck / CancelAck / ModifyAck / Reject reports in
 the harness's wire format. These are synthesised above the engine.
@@ -50,22 +48,30 @@ Path A (pure-Rust .so) in the integration menu — strictly less marshaling than
 adding a C++ wrapper just to call into Rust.
 
 - A trade listener installed at `OrderBook` construction captures every
-  `TradeResult` synchronously inside `add_limit_order`. The adapter reads a
-  thread-local `(seq, taker_oid)` set just before the call to stamp each emitted
-  Trade report with the originating message's seq.
-- **IOC** is submitted as GTC; if the engine leaves a resting residual the
-  adapter calls `cancel_order` on the new id and emits a `CancelAck` for the
-  unfilled quantity. Doing it this way instead of `TimeInForce::Ioc` keeps the
-  emission order deterministic — Trades from the listener first, then the
-  CancelAck — which matches how the C++ adapters order the same reports.
+  `TradeResult` synchronously inside `add_limit_order`. The adapter reads
+  thread-local `(seq, taker_oid)` cells set just before the call to stamp
+  each emitted Trade report with the originating message's seq, and the
+  listener writes back the taker's post-match `remaining_quantity()` — the
+  engine's own answer for what is left of the incoming order.
+- **IOC** is submitted as the engine's native `TimeInForce::Ioc`. Trades emit
+  through the listener during matching; the engine drops any residual
+  internally (an Ioc never rests) and reports an unfilled/partially-filled
+  Ioc through its `Err(InsufficientLiquidity { available, .. })` arm. The
+  adapter synthesises the harness `CancelAck` for the unfilled remainder
+  from those engine-returned quantities — Trades first, then the CancelAck,
+  the same emission order as the C++ adapters.
 - **Modify** is the harness contract — cancel + reinsert with queue-priority
   lost. The adapter cancels through the engine, emits `ModifyAck` at the new
   price/qty, then re-submits as a new GTC limit so any crossing fills emit
   through the trade listener tagged with the modify's seq.
-- A shadow map `oid -> {side, price, remaining, alive}` drives the reject path
-  and CancelAck/ModifyAck side/price echo, matching the C++ adapters' approach.
-  Maintained from the same listener that emits trades — partial fills decrement,
-  full fills mark dead.
+- **No adapter-side order state.** The engine's id-keyed `cancel_order` is
+  both the reject adjudicator and the payload source: `Ok(Some(order))`
+  returns the removed order's side, price, and live remaining quantity for
+  the CancelAck/ModifyAck echo, and `Ok(None)` (not resting) drives
+  CancelReject / ModifyReject. The book and transport handles live in
+  single-thread-owned cells (`UnsafeCell` behind a `Sync` shim — the
+  `ThreadOwned` idiom shared with the philipgreat and limitbook adapters);
+  no lock or atomic sits on the hot path.
 
 ## Build / run
 

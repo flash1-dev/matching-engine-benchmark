@@ -21,8 +21,32 @@ its upstream at the pinned commit so any observation here is reproducible.
 
 ## Snapshot
 
-Measurements taken on **2026-05-24** (the original eight) and **2026-06-09**
-(three high-throughput-claim engines, added below) against these upstreams:
+Source observations were first recorded on **2026-05-24** (the original
+eight) and **2026-06-09** (three high-throughput-claim engines, added below)
+against these upstreams. On **2026-06-11** two things changed and every
+throughput figure and verdict in this document was re-measured in a single
+confined session on the result:
+
+- **All adapter shims were reworked** to a minimal-overhead form —
+  flat-vector id translation, no adapter-side locks or per-message
+  allocation, and the engine's own API wherever the engine provides one
+  (each adapter README documents its mapping). One verdict was corrected in
+  the process (Tzadiko, below).
+- **The canonical workload was re-anchored.** The generator implements the
+  paper benchmark's construction; how deep a standing book a run carries is
+  a property of the seed's price-path realisation (see
+  `docs/METHODOLOGY.md`, *The standing book*). The previously published
+  canonical seed produced realisations whose moving scenarios ran against a
+  nearly empty resting book — flattering engines whose per-order costs grow
+  with standing depth, and exercising none of the resting-set pressure the
+  paper's own benchmark runs carried. The canonical seed is now **23**,
+  chosen so each scenario's realisation matches the paper benchmark's
+  standing-book and fill profile scenario for scenario; a marketable-order
+  fraction that the earlier harness workload added on top of the paper's
+  model was removed at the same time. All five reference hashes were
+  regenerated from the three-baseline consensus. Figures measured before
+  this revision — including earlier revisions of this document — are not
+  comparable to the table below.
 
 | Project                                         | Lang | Pinned commit                              | Upstream as of |
 |-------------------------------------------------|------|--------------------------------------------|----------------|
@@ -85,6 +109,47 @@ The correctness findings below all came from (1) and (2). The throughput
 observations live in their own section and are framed as side-by-side
 measurements under different workloads, not as a comparison of like with like.
 
+### What VALID and INVALID mean here
+
+The harness's verdict is mechanical. A run is **VALID** only when the engine's
+full report stream reproduces the three-baseline consensus hash *and* the 192
+random-point state-audit probes match a baseline replay (see
+`docs/ANTI_CHEAT.md`). Any byte difference — a different trade price, a
+different maker id, an extra or a missing fill — makes the run **INVALID**. So
+INVALID means *"this engine's output diverges from the consensus of three
+independent baselines,"* and nothing more; it is not a judgment of engineering
+quality.
+
+Those divergences are not all the same kind, and each finding below says which
+kind it is:
+
+- **Hard-invariant violation** — the output breaks a rule no order book can be
+  configured out of: quantity is not conserved, an order fills past its resting
+  size, or a trade prints through the book. limitbook over-matches ~4.3×; the
+  un-patched form of geseq trades through the book. These are wrong against the
+  engine's own contract, not only against ours.
+- **Price-time-priority violation (quantity-conserving)** — quantity is conserved
+  and the engine is internally coherent, but one field breaks the price-time
+  priority that regulated equity limit-order books publish and the three
+  baselines enforce. The two we saw fail differently: robaho stamps each cross
+  with the wrong execution price (the lower of the two limits — i.e. the
+  aggressor's own price on a sell-side cross — rather than the maker's), pairing
+  the right two orders at the wrong price; OrderBook-rs matches a *later* arrival
+  ahead of a partially-filled maker that should keep its queue position, so the
+  counterparty itself is wrong. Both fail the consensus hash — INVALID — and are
+  milder than the class above only in that no quantity is fabricated and no trade
+  prints through the book, not because the divergence is a defensible convention.
+- **Engine-state corruption** — the engine's internal bookkeeping breaks in
+  a way that can end a run rather than (only) bend the output. We observed
+  one such defect in CppTrader off the canonical path (its id index retained
+  a fully-executed order node with a dangling price-level pointer; a later
+  cancel of that id segfaulted inside the engine) — see its section for the
+  verified mechanics and the provenance. The canonical workload does not
+  trigger it, so CppTrader's table cells carry ordinary verdicts.
+
+We flag the distinction so a reader can weigh each divergence on its merits
+rather than reading one INVALID as equivalent to another.
+
 ## Correctness findings
 
 ### robaho/cpp_orderbook — trade-price field
@@ -105,13 +170,23 @@ sell's own limit.
 
 How it presents in the harness:
 
-- The report-stream hash differs from the three-baseline consensus on **all
-  five scenarios**. Sample diff (format `type,seq,price,qty,maker,taker`):
+- The report-stream hash differs from the three-baseline consensus on the
+  **four moving scenarios**. First divergence on `normal` (observed during
+  development; format `type,seq,price,qty,maker,taker` — a sell at 33,559
+  crossing a resting bid at 33,857):
   ```
-  baselines:  1,249,32771,41,317969,881378
-  robaho:     1,249,32493,41,317969,881378
+  baselines:  1,76,33857,87,232140,932154
+  robaho:     1,76,33559,87,232140,932154
   ```
-  Same fill (quantity, maker, taker); different reported price.
+  Same fill (quantity, maker, taker — and 62,474 trades on `normal`, exactly
+  matching the consensus count on every scenario); different reported price.
+  Because the consensus hash compares the maker's price byte-for-byte
+  (rule 1 in `LLM_INSTRUCTIONS.md`), this is `Verdict: INVALID` — a wrong
+  execution price (a price-priority violation), not a quantity-conservation
+  violation.
+- On `static` the hash **passes**: that scenario's sparse fills are one-tick
+  modify reprices meeting at the mid, where bid price equals ask price, so
+  `MIN` of the two *is* the maker's price and the fill is correct.
 - The state audit passes 192/192 checks on every scenario. Book bid/ask/depth
   bookkeeping is internally consistent — the divergence is purely in the
   trade-price field.
@@ -147,22 +222,38 @@ the harness contract cannot be honored at all.
 192 state checks mismatch the Liquibook baseline's answers to
 `GetBestBidPrice / GetBestAskPrice / GetBidQuantities / GetAskQuantities`.
 The exact count varies by probe seed (re-randomised per run) and by
-scenario; observed on this snapshot is roughly 65–190 of 192, lowest on
-`flash-crash` and highest on `static`. The engine's queries are internally
+scenario; observed on this snapshot: roughly 88–185 of 192 across the five
+scenarios (lowest on `flash-crash`, highest on `static`). The engine's queries are internally
 consistent for jxm35 but do not agree with what an independent baseline
 computes from the same input stream. We have not pin-pointed root cause.
 
-**Report-stream divergence on dense-crossing scenarios.** The hash matches the
-consensus on the three volatile scenarios (`swing-25`, `swing-40`,
-`flash-crash`) but differs on `static` (10,126 trades vs the consensus 10,428
-— 302 short, ~2.9%) and on `normal` (71,852 vs the consensus 71,851 — the
-trade count matches within one, but the rest of the report stream diverges
-enough to fail the hash). Why dense-crossing patterns trigger divergence and
-volatile ones do not is something we did not trace to source.
+**Missed crossings.** On every scenario the engine matches slightly less
+than the consensus: 62,088 trades vs 62,474 on `normal`, 776 vs 827 on
+`static`, within a handful on the swings. The first divergence on `normal`
+(observed during development) is the shape of all of them: at seq 1,499 the
+consensus fills 31 shares against resting order 447431 and then rejects that
+order's stale modify and duplicate cancel (it is gone); jxm35 misses the
+crossing, leaves 447431 resting, and instead acks the modify and the cancel. Each missed fill thus
+also flips later reject reports into acks, so the stream diverges more
+than the trade-count deficit alone suggests. During development we also ran
+a deeper-standing-book stress variant of the workload, where the same
+under-matching scaled dramatically (tens of percent of all crossings missed
+and throughput collapsing with resting-set size); the canonical workload
+exercises the defect only at the margin. We did not trace it to source.
+
+Taken together these put jxm35 at `Verdict: INVALID` under the harness's
+mechanical criterion — the state-audit probes mismatch the baseline on every
+scenario, and the report-stream hash fails on every scenario. We did not
+trace either to a specific mechanism, and the cause may lie in the engine,
+in the required trade-hook patch, or in a query-semantics difference rather
+than a book-state error. We therefore record jxm35 as an **untraced
+divergence** — neither the hard-invariant nor the price-time-priority class above —
+an observation rather than an attributed cause.
 
 ### PIYUSH-KUMAR1809/order-matching-engine — asymmetric cached-best staleness
 
-The buy-side matching loop in `MatchingStrategy.hpp` (around L74–92) can leave
+The buy-side matching loop in `MatchingStrategy.hpp` (L43–89, with the
+post-loop corrective at L90–92) can leave
 the cached `bestAsk` pointing to a level the matcher just emptied. When an
 aggressive buy exactly fills the current best-ask level and the incoming
 order is exhausted at the same step, the inner break clears the level's mask
@@ -180,28 +271,60 @@ stale `bestAsk` values; sell aggressors do not corrupt `bestBid`.
 How it presents in the harness:
 
 - The report-stream hash matches the consensus on all five scenarios — the
-  trade events themselves are correct.
-- The state audit catches the staleness probabilistically, depending on
-  whether one of the 192 checks lands in a window after a buy-side fill
-  that hit the path. The probe seed re-randomises each run. On `static`
-  (small recycled level set) a handful of checks — roughly 1 to 10 of 192
-  (median ~5) across observed runs — mismatch on every run. The other four scenarios
-  mismatch 0 to a few of 192 and pass outright on most observed runs.
+  trade events themselves are correct (62,474 of 62,474 on `normal`).
+- The state audit catches the staleness on every moving scenario, with
+  counts that vary by probe seed (re-randomised per run); observed on this
+  snapshot: roughly 4–14 of 192 on each moving scenario.
+  `static` passes 192/192 outright — with a fixed mid the cached best-ask
+  can go stale only onto the level it already pointed at, so the stale value
+  is still the right answer.
 
 ### mansoor-mamnoon/limit-order-book — no correctness findings
 
 The engine produces a byte-identical report stream against the three-baseline
-consensus on every scenario, and 192/192 state-audit checks match the
-Liquibook baseline on every scenario. Of the eleven projects surveyed, mansoor
-and CppTrader are the two with a fully clean correctness signal (byte-identical
-on every scenario with no source patch).
+consensus, with 192/192 state-audit checks matching, on every scenario it can
+complete inside the wall-clock budget (`swing-25`, the shuffled tape, exceeds
+it). Of the eleven projects surveyed, mansoor is the only one with a fully
+clean correctness signal and no source patch on every feasible scenario.
 
-### chronoxor/CppTrader — no correctness findings
+### chronoxor/CppTrader — an order-index corruption observed off the canonical path
 
-CppTrader produces a byte-identical report stream against the three-baseline
-consensus on every scenario, and 192/192 state-audit checks match the
-Liquibook baseline on every scenario. Two operational details worth noting
-for an integrator:
+On the canonical workload CppTrader is clean: a byte-identical report stream
+against the three-baseline consensus on all five scenarios, with 192/192
+state-audit checks matching on each. We record one engine-level defect
+anyway, because we hit it while stress-testing during the 2026-06-11
+workload re-anchoring and verified its mechanics in a debug build of the
+pinned snapshot:
+
+- Under a development stress configuration (a deeper, time-ordered standing
+  book — not the shipped workload), a one-tick reprice modify that crossed
+  and **filled completely** inside `MarketManager::ModifyOrder`'s re-match
+  left its order node in the engine's id index (`_orders`, the map behind
+  `GetOrder`) — fully executed (`ExecutedQuantity == Quantity`,
+  `LeavesQuantity == 0`) and with its `Level` pointer null (unlinked from
+  its price level at the start of the modify and never re-linked, since
+  nothing remained to rest).
+- A later cancel of that id — which the engine's own index reported as a
+  live order — reached `OrderBook::DeleteOrder`, dereferenced the null level
+  pointer (`order_book.cpp:199`), and crashed. An adapter that keeps its
+  *own* liveness shadow masks the corruption — the stale id is rejected
+  adapter-side, the run completes, and the damage surfaces only as
+  CppCommon's pool assertion at engine teardown (`"Memory leak detected!
+  Allocated memory size must be zero!"` in `PoolMemoryManager::clear`). An
+  adapter that treats the engine's `GetOrder` as the liveness oracle — the
+  engine's own API for the question — crashes. We verified both behaviours
+  against the same engine build.
+- The trigger is **narrower than "any fully-filled crossing modify"**: the
+  canonical `normal` realisation contains 39 crossing modifies that fill
+  completely, 38 of them later cancelled, and none trips the defect — the
+  engine's ordinary full-fill path erases the id correctly. We did not pin
+  the exact internal branch that leaves the orphaned index entry, so this is
+  recorded as an observation with verified symptoms rather than an
+  attributed cause. Integrators driving CppTrader's `ModifyOrder` against
+  deep books may want to keep an eye on `_orders` consistency (or run the
+  CppCommon pool assertions in debug builds, which catch it at teardown).
+
+Two operational details worth noting for an integrator:
 
 - `MarketManager::EnableMatching()` is **OFF by default**. Without it the
   engine silently rests every order without crossing — every aggressor would
@@ -240,21 +363,27 @@ across a partial fill.
 Strict price-time priority — the rule virtually every regulated equity
 exchange publishes for its standard limit-order book — requires that the
 partially-filled maker stays at the head of the queue and the next aggressor
-continues consuming it first. The harness's canonical baseline holds
-price-time priority as an invariant; OrderBook-rs as snapshotted at the
-pinned commit does not.
+continues consuming it first. The harness's canonical baseline enforces
+price-time priority — the published standard for equity limit-order books
+(pro-rata venues allocate among same-price orders differently, but none
+demotes a partially-filled maker behind later arrivals) — and OrderBook-rs as
+snapshotted at the pinned commit does not. Where the
+partial-fill case is exercised the report stream therefore diverges
+(`Verdict: INVALID`): the counterparty identity is wrong (a time-priority
+violation), with quantity, price and taker all correct.
 
 How it presents in the harness:
 
-- The report-stream hash **FAILs on `static`, `normal`, `swing-40`** and
-  **PASSes on `swing-25` and `flash-crash`**. The split is what one would
-  predict: scenarios with wider price excursions tend to consume each price
-  level cleanly in one shot or barely touch it at all, so the partial-fill
-  case is rarely exercised. Scenarios with heavier same-price queueing
-  exercise it often enough to diverge.
+- The report-stream hash **FAILs on all five scenarios**: a partially-filled
+  maker with later arrivals queued behind it at the same price — the exact
+  case the engine re-orders — occurs in every realisation, including
+  `static`'s sparse modify-crossings. Total trade counts stay within one of
+  the consensus (62,473 vs 62,474 on `normal`): the divergence is *which*
+  resting order is the counterparty, occasionally splitting a fill
+  differently, not how much trades.
 - The state audit passes 192/192 on every scenario.
-- Where the hash fails, the divergence is always a Trade-report
-  `maker_order_id` swap at exactly one price level; per-trade total
+- Where the hash fails, the divergence in the harness's runs reduces to a
+  Trade-report `maker_order_id` swap at a single price level; per-trade total
   quantity, taker, price, and the order-ack / cancel-ack / modify-ack /
   reject streams all match canonical byte-for-byte. The hash mismatch is
   purely an identity question about which of several resting orders at the
@@ -265,37 +394,69 @@ A fix in the engine would re-insert the partially-filled remainder at the
 adapter cannot work around this without reimplementing the matching loop
 above the engine — at which point one is no longer measuring the engine.
 
-### Tzadiko/Orderbook — matcher latency dominates the wall clock
+### Tzadiko/Orderbook — the engine's own IOC type self-deadlocks on a partial fill
 
-Tzadiko/Orderbook is a clarity-first reference implementation often used
-as a teaching example. The engine's matching path takes a member
-`std::mutex` on every public mutator and walks a
-`std::map<Price, std::list<OrderPointer>>` per side with
-`std::shared_ptr<Order>` objects. Both choices are reasonable for an
-educational framing but compound across the harness's ~2 M-event workload.
+> **Correction (2026-06-11).** An earlier revision of this document reported
+> Tzadiko/Orderbook as *infeasible on all five scenarios* and attributed that
+> to matcher latency ("matcher latency dominates the wall clock"). That
+> attribution was wrong. The runs were not slow — they were **hung in a
+> deadlock inside the engine** that our adapter triggered by using the
+> engine's own IOC order type. With the two-line correctness patch below, the
+> engine completes every scenario and is **VALID on all five** at 3.4–3.7 M
+> msgs/s. We keep the record of the correction here rather than silently replacing
+> it.
+
+Tzadiko/Orderbook is a clarity-first reference implementation often used as
+a teaching example. Its `Orderbook::AddOrder` takes the book's non-recursive
+member mutex (`std::scoped_lock ordersLock{ ordersMutex_ }`) and calls
+`MatchOrders()` while holding it. At the tail of `MatchOrders()`, if the
+front order at the best bid or best ask is `OrderType::FillAndKill` — i.e. a
+partially-filled IOC whose residual is now resting — the engine cancels that
+residual by calling the **public** `CancelOrder(...)`, which acquires
+`ordersMutex_` again. `std::mutex` is non-recursive, so the first IOC order
+that partially fills deadlocks the book on itself. The engine already has
+the correct primitive for this context: `CancelOrderInternal`, the
+already-locked variant its own bulk `CancelOrders` path uses under a single
+lock acquisition. The two `MatchOrders` tail sites are the only
+locked-context callers of the locking wrapper.
 
 How it presents in the harness:
 
-- **All five scenarios INFEASIBLE.** None of the five scenarios completes
-  audit mode inside a 540 s per-scenario wall-clock budget. We could not
-  determine correctness against the canonical report stream because no
-  scenario finished.
+- **Un-patched:** every moving scenario hangs on the first partially-filled
+  FillAndKill order and never completes (verified on `normal`; the workload
+  is 15% IOC, and against a standing book some of those cross with partial
+  liquidity early). `static` happens to survive — at a fixed mid a passive
+  IOC never partially fills, so the lethal tail is never taken. An earlier
+  revision of this document, measured on the old workload (whose marketable
+  flow made partially-filled IOCs immediate on every scenario), recorded
+  `infeasible (all 5)`.
+- **With the two-site patch** (`CancelOrder` → `CancelOrderInternal` in the
+  `MatchOrders` tail): all five scenarios **PASS** — the report stream
+  reproduces the consensus hash byte-for-byte and the state audit returns
+  192/192 on every scenario. Trades and end-of-call book state are exactly
+  what an un-deadlocked public cancel would produce; the patch changes which
+  lock wrapper is called, not what is cancelled.
 
-The reference adapter applies two patches at build time to remove obvious
-mismatches with the workload — the Windows-only `localtime_s` call in
-`PruneGoodForDayOrders` (background thread, never wakes during the run) and
-a `trades.reserve(orders_.size())` at the start of each match that allocates
-~50k vector slots against a typical fill count of 0–10 — and answers
-`engine_query_*` from a local shadow rather than the engine's
-O(N_resting) `GetOrderInfos()`. These changes help materially but do not
-close the gap to a workable wall-clock budget; the matcher itself is the
-bottleneck.
+The reference adapter applies the fix as its third build-time patch (same
+pattern as jxm35's `notify_trade` and geseq's `compare()` patches), alongside
+the two inherited ones: the Windows-only `localtime_s` call in
+`PruneGoodForDayOrders` (background thread; the workload contains no
+GoodForDay orders) and a `trades.reserve(orders_.size())` at the start of
+each match that allocates ~50k vector slots against a typical fill count of
+0–10. Harness IOC maps to the engine's own `FillAndKill`; modify uses the
+engine's native `ModifyOrder`; audit queries are answered from the engine's
+native `GetOrderInfos()`.
 
-The engine is well-shaped as an illustration of price-time-priority
-bookkeeping (which is the role its educational framing implies); it is not
-engineered for replay-grade throughput. We mention this because anyone integrating
-Tzadiko/Orderbook into a realistic backtest or replay system will hit the
-same wall and it may save them an afternoon.
+Two things are worth taking away. First, the engine's mutex-per-call +
+`std::map<Price, std::list<OrderPointer>>` + `std::shared_ptr<Order>` design
+— costs we previously blamed for the wall-clock failure — in fact sustains
+3.4–3.7 M msgs/s on this workload, mid-pack among the engines surveyed here
+and essentially flat from the deep `static` book to the flash-crash walk.
+Second, anyone driving Tzadiko/Orderbook with its own `FillAndKill` type
+will hit the deadlock as shipped: the snapshot commit's IOC path cannot
+execute its partial-fill case at all. A downstream user who never sends
+FillAndKill (or whose IOCs always fill completely or not at all) would never
+see it.
 
 ### geseq/orderbook — multi-level crossings ignore the price predicate
 
@@ -334,7 +495,7 @@ does not mention multi-level crossing semantics either way. A downstream
 consumer of fills running the un-patched engine would see fills at prices
 that should not have crossed.
 
-### philipgreat/lighting-match-engine-core — two issues surfaced by the cancel/modify path
+### philipgreat/lighting-match-engine-core — three issues surfaced by the cancel/modify path
 
 The engine ships two order books behind a trait: a `DenseOrderBook` (a flat
 `Vec` of price buckets, the path the README's "8 ns per order" figure
@@ -345,38 +506,59 @@ adapter drives the sparse book — the only one of the two that can represent th
 flow at all.
 
 Run against the sparse book, the harness's cancel / modify / IOC lifecycle
-surfaced two issues the engine's add-and-match micro-benchmark does not
+surfaced three issues the engine's add-and-match micro-benchmark does not
 exercise:
 
-- A cancelled order left at the front of a price-level queue was not pruned
-  before the next match, so the matcher could emit a zero-quantity Trade
-  against it (first seen at sequence 3911).
-- Because the harness models modify as cancel + reinsert, a modified order can
-  leave a same-id tombstone in its old bucket; `cancel_order` located that dead
-  duplicate via a plain `find(|o| o.order_id == id)` rather than the live
-  reinserted order, so a later cancel could act on the wrong instance
-  (sequence 6076).
+- A cancelled order left at the front of a price-level queue is not pruned
+  before the next match, so the matcher emits zero-quantity Trades against
+  it. Un-patched on the canonical `normal`, the engine prints 73,363 Trade
+  reports against the consensus's 62,474 — 10,889 extra, all zero-quantity
+  phantoms against cancelled front orders (observed during development; first
+  at sequence 1,499: `1,1499,34205,0,503555,…`, a 0-share print against
+  cancelled order 503555).
+- Because the harness models modify as cancel + reinsert, a modify that keeps
+  the same price can leave a same-id tombstone in the bucket the live order is
+  reinserted into; `cancel_order` located that dead duplicate via a plain
+  `find(|o| o.order_id == id)` rather than the live reinserted order, so a
+  later cancel could act on the wrong instance.
+- The same cancel-and-reinsert idiom could leave the reinserted order
+  *disowned by the engine's id index*: both books prune dead orders lazily at
+  the front of each price bucket, and `prune_bucket_front` also erased each
+  popped id from `order_map`. Every order popped there had already been
+  removed from `order_map` at the moment it went inactive (`cancel_order` and
+  the match loops disown immediately), so the erase was a no-op — except when
+  a live order had since been reinserted under the same id, where it deleted
+  the *live* order's index entry. The order kept resting and matching, but the
+  engine could no longer answer for its id: cancels of it spuriously failed.
 
 How it presents in the harness:
 
-- Un-patched, the report-stream hash diverges on `normal` at the two points
-  above.
-- With two build-time patches — prune the cancelled front order before
-  matching (the dense book already does this every iteration), and add an
-  `&& o.is_active()` guard to `cancel_order` so it targets the live instance —
-  all five scenarios PASS and the state audit returns 192/192 on every scenario.
+- Un-patched, the Trade stream on `normal` carries 10,889 zero-quantity
+  phantom prints (73,363 reports vs the consensus's 62,474, from sequence
+  1,499 on) with the tombstone-cancel divergences riding inside it; the third
+  issue is latent in the same cancel-and-reinsert lifecycle and surfaces as
+  soon as anything — an engine path or an integrator — relies on `order_map`
+  to answer for a reinserted id, as this adapter's reject gating does.
+- With three build-time patches — prune the cancelled front order before
+  matching (the dense book already does this every iteration), add an
+  `&& o.is_active()` guard to `cancel_order` so it targets the live instance,
+  and drop the `order_map.remove` from `prune_bucket_front` so the id index
+  holds exactly the resting set —
+  all five scenarios PASS and the (untimed) state audit returns 192/192 on
+  every scenario (the 60 s budget that makes `static` infeasible in the
+  throughput row below does not apply to the audit).
 
-The reference adapter applies both patches at build time (same pattern as
+The reference adapter applies all three patches at build time (same pattern as
 jxm35's `notify_trade` and geseq's `compare()` patches) and documents them in
-its README. Each is a minimal correctness fix on the cancel/match path and does
-not change the engine's throughput characteristics. We did not investigate
-whether either was a deliberate simplification tied to the single-price
-benchmark configuration.
+its README. Each is a minimal correctness fix on the cancel/match path and is
+not expected to change the engine's throughput characteristics (the patches
+were not separately benchmarked). We did not investigate whether any was a
+deliberate simplification tied to the two-price benchmark configuration.
 
 ### solarpx/limitbook — partial fills do not decrement the resting maker
 
 In `src/order_book.rs`, the inner matching loop computes
-`fill_quantity = remaining.min(resting_order.quantity)` and decrements the
+`fill_quantity = remaining_quantity.min(resting_order.quantity)` and decrements the
 aggressor's remaining quantity and the level's cached volume, but never writes
 `resting_order.quantity -= fill_quantity`. A resting order is removed only when
 a fill consumes its *original* quantity, so a partially-filled maker keeps its
@@ -389,24 +571,33 @@ hit it with a sell for 30 (fills 30), again for 30 (fills 30), then a sell for
 How it presents in the harness:
 
 - The report-stream hash FAILs on all five scenarios and the state audit
-  mismatches on most. On `normal` the engine emits ~459k Trades against the
-  71k-Trade consensus (~6.4× over-match), with correspondingly inflated cancel
-  and modify rejects (orders are filled away before their cancel arrives). The
-  first divergence is at sequence 49.
+  mismatches on most (roughly 143–177 of 192 on the moving scenarios). On `normal`
+  the engine emits 268,154 Trades against the 62,474-Trade consensus (~4.3×
+  over-match), with correspondingly inflated cancel and modify rejects
+  (orders are filled away before their cancel arrives). The first divergence
+  (observed during development) is at sequence 147, and it is the defect in
+  miniature: resting sell 889598 (53 shares) was partially filled for 14 at
+  seq 125, leaving 39;
+  the consensus fills those 39 at seq 147 — limitbook, which never
+  decremented the maker, prints 53.
 
 The reference adapter does not patch this. Unlike the two fixes above, closing
 it would mean rewriting the engine's matching loop, at which point one is no
 longer measuring the engine; the throughput row below is recorded with the
-engine's output as shipped and marked INVALID.
+engine's output as shipped and marked INVALID — a quantity-conservation
+violation (the hard-invariant class above), not the milder quantity-conserving class.
 
 ## Throughput observations
 
 The harness measures median throughput on dedicated cores (matcher and
 drainer pinned via `--matcher-core` / `--drainer-core`) over ten 10⁶-NEW
-workload runs per scenario. The workload is calibrated to U.S. equity microstructure (see
-`docs/METHODOLOGY.md`): ~95% cancellation, 15% IOC, ~2% duplicate
-cancels/modifies, GBM mid-price walk per scenario, and full inter-thread
-report drainage on the timed path.
+workload runs per scenario. The workload is calibrated to U.S. equity
+microstructure (see `docs/METHODOLOGY.md`): ~95% cancellation, 15% IOC, ~2%
+duplicate cancels/modifies, a GBM mid-price walk with a standing book the
+engine carries throughout, and full inter-thread report drainage on the
+timed path. A run that exceeds 60 s of wall clock marks that engine/scenario
+cell `infeasible` (the full ten-trial protocol would otherwise spend tens of
+minutes on a single cell).
 
 The figures the projects publish were measured under their own workloads,
 with their own definitions of an operation. The table below records both
@@ -416,48 +607,57 @@ projects' own benchmarks under their own conditions.
 
 | Engine       | Harness `normal`, full report drainage | Published figure | Published workload (as described in the project) |
 |--------------|----------------------------------------:|------------------:|--------------------------------------------------|
-| piyush       | 2.33 M/s                                | ~160 M/s          | 10-symbol sharded; in-process trade callback on matcher thread |
-| philipgreat  | 5.22 M/s                                | ~125 M/s ("8 ns/order") | single-price pre-seeded dense array; in-process, add-and-match only |
-| limitbook    | 2.34 M/s (INVALID — hash FAIL)          | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
-| robaho       | 3.70 M/s                                | 10–22 M/s         | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
-| geseq        | infeasible (>540 s / trial)             | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
-| mansoor      | ≤0.03 M/s                               | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
-| jxm35        | 1.86 M/s                                | 14 M/s            | per-op latency benchmark; trade events not emitted (see above) |
-| femto_go     | 0.006 M/s (~350 s / trial)              | >10 M/s, ~70 ns         | in-process Go bench; output drained on a sibling goroutine, same process |
-| CppTrader    | 5.36 M/s                                | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
-| OrderBook-rs | 0.79 M/s (INVALID — hash FAIL)          | latency-focused   | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
-| Tzadiko      | infeasible (all 5)                      | not headlined     | tutorial repo; no published throughput target |
+| piyush       | 4.67 M/s (INVALID — state audit; stream byte-identical) | ~160 M/s | 10-symbol sharded; in-process trade callback on matcher thread |
+| philipgreat  | 4.43 M/s (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") | two-price pre-seeded dense array; in-process, add-and-match only |
+| limitbook    | 2.72 M/s (INVALID — over-match; quantity not conserved) | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
+| robaho       | 3.02 M/s (INVALID — execution-price field; quantities correct) | 10–22 M/s | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
+| geseq        | infeasible (>60 s / trial; VALID with fix in untimed audits — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
+| mansoor      | 0.03 M/s                                | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
+| jxm35        | 2.20 M/s (INVALID — untraced divergence) | 14 M/s | per-op latency benchmark; trade events not emitted (see above) |
+| femto_go     | infeasible (>60 s / trial; VALID in an untimed audit) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
+| CppTrader    | 7.26 M/s (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
+| OrderBook-rs | 0.56 M/s (INVALID — FIFO-priority divergence; quantities correct) | latency-focused | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
+| Tzadiko      | 3.45 M/s (VALID with fix — engine deadlock patch) | not headlined     | tutorial repo; no published throughput target |
 
 A reader writing their own engine and measuring it the way the harness does
 should expect numbers in the range above rather than the projects' published
 figures. The factors that shift readings most are (a) whether reports are
-drained to a separate thread on a separate core, (b) how broad the price band
-the workload visits is, and (c) whether the workload contains cancels and
-modifies at all.
+drained to a separate thread on a separate core, (b) whether the workload
+makes the engine carry a standing book, (c) how broad a price range the
+workload visits, and (d) whether the workload contains cancels and modifies
+at all.
 
-Two notes on the newer adapter rows. **OrderBook-rs** completes the run in
-~2.5 s wall time but its report-stream hash does not match the consensus on
-`normal` — the throughput is real but the engine is INVALID on this scenario,
-see *Correctness findings*. **Tzadiko** and **geseq** both exceed the
-540 s per-trial wall-clock cap (the engines themselves are the bottleneck,
-not the adapters); the figure is recorded as `infeasible` rather than a
-throughput number.
+Notes on the rows above. **piyush**'s report stream is byte-identical on all
+five scenarios; the INVALID is its cached-best staleness failing the state
+audit on every moving scenario (see *Correctness findings*).
+**OrderBook-rs** completes the run in ~4 s wall time but its report stream
+diverges from consensus on every scenario (a price-time-priority violation —
+wrong counterparty identity — quantities correct). **geseq** and **femto_go** exceed the 60 s
+per-trial wall-clock budget — both are bounded by the per-report cgo
+crossing into the dynamically-loaded Go runtime rather than by their
+matching algorithms — so their figures are recorded as `infeasible`; both
+reproduce the consensus byte-for-byte in untimed audit runs (geseq on all
+five scenarios, femto_go on `normal`, its price-window limit). **Tzadiko**,
+recorded `infeasible (all 5)` in an earlier revision of this table, is
+corrected above: the runs were deadlocked inside the engine, not slow, and
+with the two-site engine patch it is VALID on all five scenarios at
+3.4–3.7 M/s, essentially flat from the deep `static` book to `flash-crash`
+(see *Correctness findings*). **CppTrader** is VALID on all five scenarios
+at 7.3–7.6 M/s — the fastest clean reference (see its section for an
+engine defect observed off the canonical path). **mansoor** completes
+`static` (1.97 M/s) and lands right at the 60 s budget edge on `normal`
+(~0.03 M/s, ~60–61 s per run) with a byte-identical stream on both; the
+wider scenarios exceed the budget.
 
-Three rows were added on 2026-06-09, each on the strength of a high published
-figure. **philipgreat** is VALID on all five scenarios after the two patches
-described above; its `normal` throughput of 5.22 M/s sits against a published
-"8 ns per order" (≈125 M/s) figure measured on a single-price pre-seeded dense
-array, and it drops to 0.04 M/s on `static` (a fixed-price stream concentrates
-the whole book on one sparse-map level). **limitbook** is INVALID on every
-scenario (the partial-fill issue above) and measures 2.34 M/s against a
-published 3–5 M/s limit-order / ~30 M/s market-and-cancel micro-benchmark.
-**femto_go** is VALID on `normal` but at ~0.006 M/s (~350 s/trial): like geseq,
-it is bounded by the Go runtime's foreign-thread FFI cost — every report is a
-cgo call into the dynamically-loaded Go runtime from the harness's pinned
-matcher thread — rather than by its matching algorithm (the engine's own
-in-process benchmark, where one goroutine drives and another only counts,
-reports >10 M/s). Its `normal`-only fidelity is a price-index window limitation
-documented in the adapter README; the other four scenarios are not recorded.
+On **philipgreat**: VALID on the four feasible scenarios after the three
+patches described above; its `normal` throughput of 4.43 M/s sits against a
+published "8 ns per order" (≈125 M/s) figure measured on a two-price
+pre-seeded dense array, and `static` exceeds the 60 s budget outright (a
+fixed-price stream concentrates the ~21,000-order standing book on a handful
+of sparse-map levels whose buckets it scans linearly). **limitbook** is
+INVALID on every scenario (the partial-fill over-match above — a
+quantity-conservation violation) and measures 2.72 M/s against a published
+3–5 M/s limit-order / ~30 M/s market-and-cancel micro-benchmark.
 
 ### Reference baselines for calibration
 
@@ -472,21 +672,25 @@ numbers are reproducible only under a production license.
 
 | Engine          | static | normal | swing-25 | swing-40 | flash-crash |
 |-----------------|-------:|-------:|---------:|---------:|------------:|
-| Liquibook       |  infeasible | 4.67 M/s |   4.77 M/s |   4.76 M/s |    4.73 M/s |
-| QuantCup        |  6.99 M/s | 3.72 M/s |   0.70 M/s |   0.47 M/s |    0.35 M/s |
-| Exchange-core   |  1.37 M/s | 1.89 M/s |   1.82 M/s |   1.91 M/s |    1.90 M/s |
-| FlashOne        | 30.16 M/s | 30.68 M/s | 31.26 M/s | 31.18 M/s | 31.34 M/s |
+| Liquibook       | infeasible | 4.33 M/s |   4.61 M/s |   4.82 M/s |    4.86 M/s |
+| QuantCup        |  8.50 M/s | 6.93 M/s |   1.60 M/s |   0.94 M/s |    0.57 M/s |
+| Exchange-core   |  1.51 M/s | 1.56 M/s |   1.32 M/s |   1.31 M/s |    1.20 M/s |
+| FlashOne        | 40.95 M/s | 31.09 M/s | 31.41 M/s | 31.81 M/s | 32.69 M/s |
 
 Architectures: Liquibook is a price-keyed multimap per side; QuantCup is
 a flat price-indexed array; Exchange-core is a direct-access order book on
-the JVM (JNI per message). Each baseline exhibits a different sensitivity
-to volatility — QuantCup's flat array is fastest on `static` and collapses
-20× by `flash-crash`; Liquibook's price-keyed multimap is volatility-flat
-at ~4.7 M/s on the four GBM scenarios but infeasible on `static`'s
-dense-cross workload; Exchange-core is volatility-flat at ~1.9 M/s but
-pays a JNI crossing per message. FlashOne is volatility-flat at ~31 M/s.
-(Liquibook `static`: every trial ~0.03 M/s (~54–86 s wall) — the engine
-itself is the bottleneck, not a software cap.) See
+the JVM (JNI per message). Each baseline meets its own nemesis among the
+scenarios — that is the point of having five. QuantCup is fastest while the
+walk stays narrow (8.5 M/s on `static`) and collapses ~15× as it spreads
+(0.57 M/s on `flash-crash`'s ~38,000-tick range). Liquibook is the mirror
+image: mildly volatility-sensitive at 4.3–4.9 M/s on the moving scenarios,
+and infeasible under `static`'s ~21,000-order standing book (≈0.03 M/s,
+~67 s per trial — past the 60 s/trial floor), where its node-per-resting-order
+design pays most: every new order allocates a `SimpleOrder` on the timed path,
+which the deepest book pays ~1M times. The slowness is the engine's design,
+not a software cap. Exchange-core is comparatively flat at
+1.2–1.6 M/s, dominated by its per-message JNI crossing. FlashOne spans
+31.1–41.0 M/s. See
 `docs/METHODOLOGY.md` for the five scenarios and `scripts/run_challenge.py`
 for the full sweep.
 
@@ -503,13 +707,22 @@ The paper's Table 5 measures each engine's matching algorithm in a
 single-process apples-to-apples harness that bypasses the dynamic loader
 and (for Exchange-core) the JNI boundary. The figures in this document are
 from the public harness, which loads each engine as a `.so` and dispatches
-every message across that boundary. The largest effects:
+every message across that boundary. The workload model is the same
+construction in both, and as of the 2026-06-11 seed re-anchoring the
+canonical realisations carry the same standing-book and fill regime
+scenario for scenario (see `docs/METHODOLOGY.md`, *The standing book*) — so
+the remaining differences are architectural:
 
-- **Exchange-core** is much slower here: the harness crosses JNI on every message and re-launches the JVM fresh per scenario, while the paper runs Exchange-core fully in-
-  process Java with three JIT warmup passes before each measured pass.
-- **Liquibook and QuantCup** are *faster* here because the paper's apples-to-apples adapter carries reject-path bookkeeping the harness's simpler adapter does not need.
-- **FlashOne** is also slightly down from the paper's Table 5 figures, by
-  the same `.so` dispatch overhead applied symmetrically.
+- **Exchange-core** is much slower here: the harness crosses JNI on every
+  message and re-launches the JVM fresh per scenario, while the paper runs
+  Exchange-core fully in-process Java with three JIT warmup passes before
+  each measured pass.
+- **Every engine** pays the `.so` indirect-dispatch boundary per message
+  here, FlashOne included, where the paper compiles each engine into the
+  measuring binary.
+- The two generators draw from different portable-RNG streams, so the
+  realisations are not message-for-message identical — comparable in
+  regime, not byte-for-byte.
 
 One harness-wide caveat applies to every row: in both perf and audit mode,
 the harness probes the engine's book at 64 random points per run for
@@ -534,7 +747,8 @@ bash additional_references/<name>_adapter/build.sh   # clones + builds
 ```
 
 Where `<name>` is one of `piyush`, `mansoor`, `jxm35`, `robaho`, `cpptrader`,
-`tzadiko`, `orderbookrs`, `geseq`. The build scripts pin each upstream to
+`tzadiko`, `orderbookrs`, `limitbook`, `philipgreat`, `geseq`, `femtogo`.
+The build scripts pin each upstream to
 the commits listed in *Snapshot*. The adapters themselves are not maintained
 — if any upstream advances past the pinned commit the source-level
 observations here may no longer apply; treat this document as a record of

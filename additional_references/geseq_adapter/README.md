@@ -38,7 +38,10 @@ ModifyAck cannot be reconstructed from the callback alone.
 - A `harnessHandler` implements `NotificationHandler`. `PutTrade` emits the
   harness Trade report (carrying `gCurSeq`, the per-call seq the adapter
   sets before each `AddOrder`) and decrements the maker's shadow remainder.
-  `PutOrder` is a no-op — the adapter synthesises OrderAck / CancelAck /
+  `PutOrder` records the engine's cancel verdict for `MsgCancelOrder`
+  (`Canceled`/`Rejected` + the engine-reported remaining quantity) — the
+  adapter adjudicates cancels and the modify's cancel half from it — and
+  ignores create notifications. The adapter synthesises OrderAck / CancelAck /
   ModifyAck / CancelReject / ModifyReject above the engine, with side and
   price echoed from the shadow.
 - **Token**: a monotonic per-process counter (`gTok`) advanced before every

@@ -48,7 +48,6 @@ g++ -std=c++20 -O3 -march=native -fPIC -shared \
     -I"$REPO/api" \
     -I"$SRC/include" \
     -I"$CC/include" \
-    -I"$SRC/modules" \
     -o "$REPO/cpptrader_adapter.so" \
     cpptrader_adapter.cpp \
     "$SRC/source/trader/matching/market_manager.cpp" \

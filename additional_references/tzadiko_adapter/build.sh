@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Build tzadiko_adapter.so. Clones Tzadiko/Orderbook at a pinned commit,
-# patches one Windows-only call (`localtime_s`) to its POSIX equivalent so
-# the engine source compiles on Linux, and links the result with this
-# adapter into a single .so at the harness repo root.
+# applies the three source patches documented below (POSIX localtime port,
+# per-match trades.reserve removal, FillAndKill tail-cancel deadlock fix),
+# and links the result with this adapter into a single .so at the harness
+# repo root.
 #
-# The patch swaps the call inside `PruneGoodForDayOrders` only — the
-# arithmetic and control flow are untouched. PruneGoodForDayOrders runs in a
-# background thread that sleeps until 16:00 local time; for the harness's
-# GoodTillCancel + FillAndKill workload it never wakes during the run.
+# PruneGoodForDayOrders runs in a background thread that sleeps until 16:00
+# local time. The workload contains no GoodForDay orders, so if a run ever
+# straddles that boundary the wake finds nothing to cancel (it briefly takes
+# the book mutex and goes back to sleep).
 #
 # Override the upstream checkout: ME_TZADIKO_SRC=/path/to/existing/clone.
 set -euo pipefail
@@ -30,8 +31,11 @@ else
     git -C "$SRC" reset --hard --quiet "$TZADIKO_REF"
 fi
 
-# Two source-level patches to Orderbook.cpp. Both are idempotent — the
-# `git reset --hard` above restores the file each rerun.
+# Three source-level patches to Orderbook.cpp. All are idempotent in
+# themselves (each sed's pattern is gone after one application); on the
+# default third_party checkout the `git reset --hard` above additionally
+# restores a pristine file each rerun (an ME_TZADIKO_SRC override relies on
+# the seds' own idempotency).
 #
 # 1. POSIX port. `localtime_s` is Windows-only; the POSIX equivalent is
 #    `localtime_r(time_t const*, tm*)` with swapped arguments. The call sits
@@ -44,9 +48,22 @@ fi
 #    0–10 — pure overhead, no semantic effect. We let std::vector grow on
 #    demand. Both the matched trades that get pushed and the returned vector
 #    are byte-identical to the un-patched build.
+#
+# 3. Deadlock fix (correctness, not performance). MatchOrders' FillAndKill
+#    tail-cancel calls the PUBLIC CancelOrder while AddOrder still holds the
+#    book's non-recursive ordersMutex_ — a guaranteed self-deadlock the first
+#    time a FillAndKill order partially fills, so the engine's own IOC type
+#    cannot execute as shipped. The engine already provides the
+#    already-locked variant, CancelOrderInternal (what CancelOrders uses
+#    under its own lock); the two tail sites are the only locked-context
+#    callers of the locking wrapper. The replaced pattern appears exactly at
+#    those two sites and nowhere else. Trades and end-of-call book state are
+#    identical to what an un-deadlocked public-cancel would produce.
 sed -i 's|localtime_s(&now_parts, &now_c);|localtime_r(\&now_c, \&now_parts);|' \
     "$SRC/Orderbook.cpp"
 sed -i 's|trades.reserve(orders_.size());|/* trades.reserve removed by tzadiko_adapter — was O(orders_) per call */|' \
+    "$SRC/Orderbook.cpp"
+sed -i 's|CancelOrder(order->GetOrderId());|CancelOrderInternal(order->GetOrderId());|' \
     "$SRC/Orderbook.cpp"
 
 cd "$DIR"

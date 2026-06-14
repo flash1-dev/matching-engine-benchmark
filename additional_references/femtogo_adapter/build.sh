@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build femtogo_adapter.so. Installs a Go toolchain (user-local, no sudo) if one
 # is not already on PATH, clones ejyy/femto_go at a pinned commit, copies its
-# engine sources into the cgo wrapper package (femto_go is `package main` with
-# unexported types/fields, so it is copied in rather than imported), and builds
+# engine sources into the cgo wrapper package (femto_go is `package main` —
+# not importable — with unexported fields, so it is copied in rather than
+# imported), and builds
 # a Go cgo c-shared library at the harness repo root.
 #
 # Override the upstream checkout: ME_FEMTOGO_SRC=/path/to/existing/clone.
@@ -63,9 +64,10 @@ fi
 
 # ---------------------------------------------------------------------------
 # Copy the engine sources into the wrapper package. femto_go is `package main`
-# with unexported types (Order, OrderBook, Side, Price, ...) and an unexported
-# outputRing field, so the wrapper compiles the engine in the same package
-# rather than importing it. We copy every .go file EXCEPT:
+# (a main package cannot be imported as a library), and the fields the wrapper
+# must reach (outputRing, and the ring's writePos/readPos/buffer) are
+# unexported, so the wrapper compiles the engine in the same package rather
+# than importing it. We copy every .go file EXCEPT:
 #   - main.go     : has its own func main() (the demo) — would collide with the
 #                   wrapper's required buildmode=c-shared func main().
 #   - *_test.go   : test files, not needed for the library.

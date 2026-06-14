@@ -17,11 +17,14 @@ its `src/main.rs` micro-benchmark: a pre-seeded narrow book matched by a stream
 of orders all at the **same two prices** (buy @ 10000 vs sell @ 1), which hits
 the engine's flat-array "dense" book on a single hot cache line.
 
-Driven by the harness's realistic order flow (a GBM mid-price, power-law depth,
-and a full cancel/modify/IOC lifecycle), the same engine measures **~5.2 M
-msgs/s** on this adapter (clean cores, 10-trial median). The collapse is
-expected and is the point of the measurement — see
-"Which order book" below for why the advertised dense path is unusable here.
+Driven by the harness's realistic order flow (a GBM mid-price, power-law
+depth with a standing book, and a full cancel/modify/IOC lifecycle), the
+same engine measures **4.43 M msgs/s** on `normal` with this adapter (clean
+cores, 10-trial median), and `static` — whose ~21,000-order standing book
+concentrates on a handful of sparse-map levels the engine scans linearly —
+exceeds the 60 s per-trial budget outright. The collapse is expected and is
+the point of the measurement — see "Which order book" below for why the
+advertised dense path is unusable here.
 
 ## Engine shape
 
@@ -92,12 +95,15 @@ harness `engine_*` extern-C symbols directly — no C++ shim. Mirrors the
   cancel through the engine, emit exactly one `ModifyAck` at the new price/qty,
   then re-submit on the same side so any crossing fills emit as Trades stamped
   with the modify's seq.
-- A shadow map `oid -> {side, price, remaining}` drives the reject paths
-  and the side/price echo on acks, maintained from the trades each match
-  produces (partial fills decrement the maker, full fills remove the entry) —
-  the same approach the other reference adapters use. The engine has no public
-  "is this order resting, and at what side/price?" predicate, so the shadow is
-  the adapter's source of truth for that bookkeeping.
+- The engine's own id index — its `pub order_map: AHashMap<u64, (is_buy,
+  price)>`, the same index its `cancel_order` consults — is the adapter's
+  reject gate and the source of the side/price echoed on acks (with source
+  patch 3 below, the index holds exactly the resting set). The adapter keeps
+  exactly one per-order datum of its own: `AHashMap<u64, u32>` of
+  `oid -> remaining` — the engine's tracking carries no quantity —
+  maintained from the trades each match produces (partial fills decrement
+  the maker, full fills remove the entry). It hashes with `ahash`, the
+  engine's own hasher for the same u64 keys.
 - Audit queries read the engine's `bids`/`asks` BTreeMaps directly, skipping
   levels whose orders are all cancelled (the engine prunes lazily): best-bid =
   highest bid key with a live order, best-ask = lowest ask key with a live
@@ -106,10 +112,10 @@ harness `engine_*` extern-C symbols directly — no C++ shim. Mirrors the
 
 ## Source patches (applied by `build.sh`, idempotent)
 
-The upstream is missing two corrections the harness's full lifecycle exposes.
-Both are applied with a Python `str.replace` after `git reset --hard <sha>`, are
-guarded so a re-apply is a no-op, and change only the two correctness sites
-below — no other engine logic.
+The upstream is missing three corrections the harness's full lifecycle exposes.
+All are applied with Python string replacements after `git reset --hard <sha>`,
+are guarded so a re-apply is a no-op, and change only the three correctness
+sites below — no other engine logic.
 
 1. **`sparse.rs` — front-prune inside the inner match loop.** The sparse book
    prunes cancelled/depleted orders only at a bucket's front, *once*, before its
@@ -117,11 +123,12 @@ below — no other engine logic.
    re-prunes, so after the order ahead of it is consumed a cancelled order with
    `remaining_quantity == 0` left at the front is "matched" for
    `min(taker, 0) == 0` units, emitting a **phantom zero-quantity Trade**.
-   (First divergence vs the baseline: a sell at seq 3911 produces an extra
-   `1,3911,32783,0,319736,…` against order 319736, which had been cancelled at
-   seq 3893.) The dense book is immune because it prunes the front on every
-   iteration; the patch adds the same `prune_bucket_front` to the sparse inner
-   loop.
+   Un-patched on the canonical `normal`, the engine emits 10,889 of them
+   (73,363 Trade reports vs the 62,474-report consensus; first at seq 1,499:
+   `1,1499,34205,0,503555,…`, a 0-share print against cancelled order
+   503555). The dense book is immune because it prunes the front on every
+   iteration; the patch adds the same `prune_bucket_front` to the sparse
+   inner loop.
 
 2. **`sparse.rs` + `dense.rs` — `cancel_order` must target the *active*
    instance.** Both books soft-delete on cancel (zero the quantity + set
@@ -131,18 +138,30 @@ below — no other engine logic.
    price (a pure quantity increase): the modify cancels the original (leaving a
    non-front tombstone) and reinserts under the same id. A later real cancel
    then runs `find(|o| o.order_id == id)`, matches the **tombstone first**, and
-   zeroes it again — leaving the live reinserted order resting forever. (First
-   matching-state divergence vs baseline: order 932614, acked @ seq 6063,
-   modified @ 6064, cancelled @ 6065, still matches at seq 6076.) The patch
-   changes the predicate to `o.order_id == id && o.is_active()` so a cancel hits
-   the live order, not the stale duplicate.
+   zeroes it again — leaving the live reinserted order resting forever and
+   still matching. The patch changes the predicate to
+   `o.order_id == id && o.is_active()` so a cancel hits the live order, not
+   the stale duplicate.
 
-With both patches the adapter's whole report stream is **byte-identical** to the
+3. **`sparse.rs` + `dense.rs` — `prune_bucket_front` must not disown a
+   reinserted same-id order.** The lazy front-prune loop also removed each
+   popped id from `order_map`, the engine's id index. Every order popped
+   there was *already* removed from `order_map` at the moment it went
+   inactive (`cancel_order` and the match loops disown immediately), so that
+   remove was a no-op — except when a live order had since been reinserted
+   under the same id (cancel + re-add, the standard modify idiom): there it
+   deleted the **live** order's index entry, leaving it resting but
+   unanswerable by id — a cancel of it spuriously fails while its liquidity
+   keeps matching. The patch drops the remove so `order_map` holds exactly
+   the resting set (patched in both books for parity). This matters doubly
+   for this adapter, which reads `order_map` as its reject gate (above).
+
+With the three patches the adapter's whole report stream is **byte-identical** to the
 three-baseline consensus on `normal` (perf hash PASS) and the anti-cheat state
 audit passes (192/192 probes match `liquibook`).
 
 The upstream crate is also **binary-only** (`src/main.rs`, no `src/lib.rs`), so
-`build.sh` additionally writes a one-line `src/lib.rs` that re-exports the
+`build.sh` additionally writes a re-export-only `src/lib.rs` that exposes the
 engine modules, letting the wrapper crate link it as a path dependency. This is
 mechanical (no logic change) and likewise idempotent.
 
