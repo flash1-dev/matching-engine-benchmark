@@ -3,7 +3,7 @@
 A reproducible benchmark for limit-order-book matching engine algorithms. Published with
 [*"The World's Fastest Matching Engine Algorithm"*](https://arxiv.org/abs/2606.01183) (Flash One Technologies, 2026).[^paper]
 
-The harness replays a fixed, deterministic order-flow workload through an engine algorithm 
+The harness replays a fixed, deterministic order-flow workload through an engine algorithm
 loaded as a shared library, verifies the result against a cryptographic hash,
 and measures throughput — so any two engine algorithms (hereafter "engine") can be compared on identical work.
 
@@ -37,33 +37,38 @@ the part that pairs up incoming buy and sell orders and turns them into
 trades. It is the heart of the market, and how fast it works sets the speed
 limit for the whole venue. Trading doesn't arrive in a steady stream; it comes
 in bursts — the market sits quiet, then the instant a price moves or news
-breaks everyone reacts at once and a flood of order messages lands within a
-few millionths of a second.[^microburst] Most aren't trades at all but quotes
-that automated traders post and pull as they reprice: on Deutsche Börse's
-exchange **98.6%** of order-entry traffic is these throwaway, non-resting
-quotes, and the system has handled **857 million** requests in a single
-day.[^t7]
+breaks, everyone reacts at once and a flood of order messages lands within a
+few millionths of a second.[^microburst]
 
 Speed creates its own problem. The faster the exchange runs, the faster its
 customers can react — so they fire the next message sooner and the bursts grow
 sharper still; Deutsche Börse describes exactly this feedback loop, with
 *exchange latency* and *customer reaction time* chasing each other downward as
 customers "are constantly getting faster and send us more transactions in
-sharper peaks."[^t7] Underneath every price move a race plays out: market
-makers scrambling to cancel quotes that have just gone stale before someone
-trades against them at the old price, and faster traders scrambling to hit
-those same quotes first.[^armsrace]
+sharper peaks."[^t7] That feedback loop has only tightened as ever-faster
+hardware — and, lately, AI-driven trading — lets participants react faster
+still. Underneath every price move a race plays out: market makers scrambling
+to cancel quotes that have just gone stale before someone trades against them
+at the old price, and faster traders scrambling to hit those same quotes
+first.[^armsrace]
 
 This is why a matching engine is judged on its *throughput*, not its average
 speed. On a calm day almost anything is fast enough; what matters is
 **headroom** — how big a burst it can swallow before a queue forms behind it.
+The matcher is typically the narrowest stage of the whole pipeline: a venue's
+gateways and sequencers can take in far more traffic than the strictly serial
+match loop can clear — Deutsche Börse's T7 shows inbound flow peaking in the
+millions of messages a second at the gateway while only a few hundred thousand
+a second reach matching — so a burst piles up behind the matcher, not upstream
+of it.[^t7]
+
 The exchange's own goal is "constant low latency especially in high load
 situations (aka bursts)":[^t7] keep pace and delays stay flat; fall behind and
 every message in the burst waits in line, and that queue — not the average
 speed — is what becomes the worst-case delay (the "P99", the slowest 1 in 100)
 in the moments that matter most.[^serial] When the engine can't clear a burst,
-market makers get picked off at stale prices, lose money, and quote more
-cautiously — wider spreads, less size — so the market turns thin and expensive
+**market makers get picked off at stale prices, lose money, and quote more
+cautiously** — wider spreads, less size — so the market turns thin and expensive
 and the ordinary investor quietly pays the difference.[^marketquality]
 
 ## What it measures
@@ -123,7 +128,7 @@ reproducible only under a production license. See `discoveries.md` for
 per-engine architecture notes, observations from eleven further surveyed
 engines, and how to interpret each row.
 
-**Order-identifier tracking.** On every cancel, modify, and fill an engine
+**Order-identifier tracking.** On every cancel, modify, and fill, an engine
 must map the harness's client order id back to its own internal order handle.
 So that this step is measured apples-to-apples against engines that allocate
 their order tables statically — QuantCup, for instance, indexes a flat
@@ -248,11 +253,11 @@ A. To give anyone a concrete, reproducible way to *falsify* the paper's title �
 
 Q. Isn't a fast matching engine easy to build?
 
-A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. Almost every implementation is a variant of the same idea — a linked-list order queue inside a pre-allocated, statically allocated contiguous region — yet, before our work, no one had pinned down the optimal size of that region or how those links are best implemented.
+A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. Almost every public implementation is a variant of the same idea — a linked-list order queue inside a pre-allocated, statically allocated contiguous region — yet, before our work, no one had pinned down the optimal size of that region or how those links are best implemented.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
-A. Yes, on average. But the matcher's throughput headroom — not its average latency — is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. For the full argument on why the matcher needs throughput headroom several times its average load, see the Background above and the paper.
+A. Yes, on average. But the matcher's throughput headroom — not its average latency — is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. Deutsche Börse (one of Europe's largest exchange operators, ~$50B market cap) makes the point itself: "Our customers are constantly getting faster and send us more transactions in sharper peaks → requires higher throughput on our side."[^t7]
 
 Q. There are a lot of variables the challenge doesn't consider — networking, exchange-specific or per-jurisdiction rules, and the like.
 
@@ -273,7 +278,7 @@ the paper; the notes below cite the specific sources behind each claim.
 
 [^paper]: Jake Yoon. 2026. *The World's Fastest Matching Engine Algorithm.* Flash One Technologies. [arXiv:2606.01183](https://arxiv.org/abs/2606.01183). The harness, baseline adapters, and byte-identical reference hashes are released with the paper so its results are independently reproducible.
 [^microburst]: That order flow concentrates in short, microsecond-scale bursts that dominate the latency tail: Deutsche Börse Group, *Xetra Insights* (2016) and *Insights into Trading System Dynamics: Deutsche Börse's T7* (2025); Albert J. Menkveld, "High-Frequency Trading as Viewed through an Electron Microscope," *Financial Analysts Journal* 74(2), 2018. doi:10.2469/faj.v74.n2.1
-[^t7]: Sergej Teverovski (Head of Section, Xetra/Eurex Application Development, Deutsche Börse AG), *T7 — Latency Roadmap*, Deutsche Börse Group Open Day 2023 (21 Sep 2023) — the source of the figures quoted here (857 million daily requests, 13 Mar 2023; 98.6% non-persistent order entry, 4 Aug 2023) and of the "T7 latency ↔ customer reaction time" feedback loop and the "constant low latency … in high load situations (aka bursts)" target. <https://www.deutsche-boerse.com/resource/blob/3690194/fe6b01b1e14800eb40374a95516debf2/data/Open%20Day%202023%20-%20Presentation,%20T7-Latency%20Roadmap.pdf>
+[^t7]: Sergej Teverovski (Head of Section, Xetra/Eurex Application Development, Deutsche Börse AG), *T7 — Latency Roadmap*, Deutsche Börse Group Open Day 2023 (21 Sep 2023) — the source of the figures quoted here (857 million daily requests, 13 Mar 2023; 98.6% non-persistent order entry, 4 Aug 2023; and the gateway-to-matching throughput gap — inbound flow peaking in the millions of messages/second at the gateway against a few hundred thousand/second at the start of matching) and of the "T7 latency ↔ customer reaction time" feedback loop and the "constant low latency … in high load situations (aka bursts)" target. <https://www.deutsche-boerse.com/resource/blob/3690194/fe6b01b1e14800eb40374a95516debf2/data/Open%20Day%202023%20-%20Presentation,%20T7-Latency%20Roadmap.pdf>
 [^armsrace]: The latency-arbitrage ("stale-quote sniping") race between liquidity providers cancelling stale quotes and fast traders picking them off: Matteo Aquilina, Eric Budish, and Peter O'Neill, "Quantifying the High-Frequency Trading Arms Race," *Quarterly Journal of Economics* 137(1), 2022, 493–564 — they estimate eliminating sniping would cut investors' cost of liquidity by up to ~17%. doi:10.1093/qje/qjab032. See also Eric Budish, Peter Cramton, and John Shim, "The High-Frequency Trading Arms Race: Frequent Batch Auctions as a Market Design Response," *QJE* 130(4), 2015. doi:10.1093/qje/qjv027
 [^serial]: Per-symbol matching is strictly serial under price–time priority, so its single-core throughput is a hard ceiling no surrounding parallelism can lift (Gene M. Amdahl, AFIPS 1967, doi:10.1145/1465482.1465560); once a burst exceeds that ceiling, end-to-end latency is governed by queuing delay rather than compute. Publicly documented per-partition matching ceilings are on the order of ~300,000 orders/s (Deutsche Börse T7; Eurex T7 documentation, 2024).
 [^marketquality]: Faster matching and lower latency measurably tighten spreads and improve market quality (with diminishing returns once fast access is already available): David M. Kemme, Thomas H. McInish, and Jiang Zhang, "Market fairness and efficiency: Evidence from the Tokyo Stock Exchange," *Journal of Banking & Finance* 134, 2022, 106309 (doi:10.1016/j.jbankfin.2021.106309); Hamish Murray, Thu Phuong Pham, and Harminder Singh, "Latency reduction and market quality: The case of the Australian Stock Exchange," *International Review of Financial Analysis* 46, 2016, 257–265 (doi:10.1016/j.irfa.2015.09.001).
