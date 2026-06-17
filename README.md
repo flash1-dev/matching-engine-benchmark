@@ -112,21 +112,24 @@ byte-identical output stream — every report, not just trades — and that
 agreement is the correctness reference.
 
 Throughput on the canonical workload (median of 10 trials, single matcher /
-single drainer on adjacent cores, Graviton4 / Neoverse-V2,
-`-O3 -march=native`):
+single drainer on adjacent cores, Graviton4 / Neoverse-V2, `-O3 -march=native`),
+ranked by **worst-case throughput** — the lowest of an engine's five scenario
+results — because a venue must survive its worst regime, not its best. The
+scenario that produces each worst case is shown alongside:
 
-| Engine          | static    | normal    | swing-25  | swing-40  | flash-crash |
-|-----------------|----------:|----------:|----------:|----------:|------------:|
-| Liquibook       | infeasible | 4.33 M/s  | 4.61 M/s  | 4.82 M/s  | 4.86 M/s    |
-| QuantCup        | 8.50 M/s  | 6.93 M/s  | 1.60 M/s  | 0.94 M/s  | 0.57 M/s    |
-| Exchange-core   | 1.51 M/s  | 1.56 M/s  | 1.32 M/s  | 1.31 M/s  | 1.20 M/s    |
-| **FlashOne**    | **40.95 M/s** | **31.09 M/s** | **31.41 M/s** | **31.81 M/s** | **32.69 M/s** |
+| Engine        | Worst-case throughput | Weakest scenario |
+|---------------|----------------------:|:-----------------|
+| FlashOne      | 31.09 M/s             | `normal`         |
+| Exchange-core | 1.20 M/s              | `flash-crash`    |
+| QuantCup      | 0.57 M/s              | `flash-crash`    |
+| Liquibook     | 0.03 M/s              | `static`         |
 
-FlashOne is the harness publisher's production engine — included as a
-published reference; its `.so` is not publicly available, so the row is
-reproducible only under a production license. See `discoveries.md` for
-per-engine architecture notes, observations from eleven further surveyed
-engines, and how to interpret each row.
+
+FlashOne is the harness publisher's production engine, shown as a reference.
+It stands only as a target to beat on fully public, audited work: the harness, 
+baselines, workload, and hashes that define that target are all open, so anyone can try. 
+See `discoveries.md` for per-engine architecture notes, the eleven further surveyed engines, 
+and how to interpret each row.
 
 **Order-identifier tracking.** On every cancel, modify, and fill, an engine
 must map the harness's client order id back to its own internal order handle.
@@ -192,6 +195,11 @@ and piyush fails the state audit on the moving scenarios. See
 `discoveries.md` for the specific findings and the VALID / INVALID
 criterion.
 
+These findings are offered back, not aimed at anyone. Each is a reproducible,
+time-stamped *snapshot* of a specific commit — not a verdict on a project's
+quality — and several ship with a fix the reference adapter applies
+(`discoveries.md` documents every patch).
+
 ## How it works
 
 - **Workload** — a deterministic, realistically shaped equity order flow: a
@@ -249,7 +257,15 @@ discoveries.md          observations the harness produced against the eleven sur
 
 Q. Why do you do this?
 
-A. To give anyone a concrete, reproducible way to *falsify* the paper's title — *"The World's Fastest Matching Engine Algorithm."* The workload, the baseline adapters, and the byte-identical reference hashes are all public, so any engine can be run on identical work and measured against FlashOne's published numbers. Beat them on the same work and the title is wrong; that is the test we are openly inviting. If you ever hit comparable or higher numbers with your own engine design, we would love to know. If you think the testing method is unfair, we would love to know that too.
+A. To give the community a neutral, reproducible way to measure a matching engine's throughput and check its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. One consequence is that the paper's title — *"The World's Fastest Matching Engine Algorithm"* — is openly falsifiable: beat FlashOne's published numbers on the same work and the title is wrong, and that is a test we are openly inviting. If you hit comparable or higher numbers with your own design, or you think the method is unfair, we would love to know.
+
+Q. Isn't this a self-serving benchmark — any conflict of interest in writing your own benchmark?
+
+A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical agreement of three independent open-source engines (Liquibook, QuantCup, Exchange-core), not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, thus anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself. 
+
+Q. I only want to check that my engine is correct — can I ignore the throughput number?
+
+A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the three-engine consensus *and* audits the live order book at random points. A `Verdict: VALID` means your engine reproduces the consensus output and maintains a real book, regardless of speed — for many users that correctness signal is the more valuable half.
 
 Q. Isn't a fast matching engine easy to build?
 
@@ -257,7 +273,7 @@ A. Implementing one from the recipes already on the internet is. Inventing new d
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
-A. Yes, on average. But the matcher's throughput headroom — not its average latency — is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. Deutsche Börse (one of Europe's largest exchange operators, ~$50B market cap) makes the point itself: "Our customers are constantly getting faster and send us more transactions in sharper peaks → requires higher throughput on our side."[^t7]
+A. Yes, on average. But the matcher's throughput headroom — not its average latency — is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. Deutsche Börse (one of Europe's largest exchange operators) makes the point itself: "Our customers are constantly getting faster and send us more transactions in sharper peaks → requires higher throughput on our side."[^t7]
 
 Q. There are a lot of variables the challenge doesn't consider — networking, exchange-specific or per-jurisdiction rules, and the like.
 

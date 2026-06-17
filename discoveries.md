@@ -380,7 +380,7 @@ How it presents in the harness:
   `static`'s sparse modify-crossings. Total trade counts stay within one of
   the consensus (62,473 vs 62,474 on `normal`): the divergence is *which*
   resting order is the counterparty, occasionally splitting a fill
-  differently, not how much trades.
+  differently, not how much is traded.
 - The state audit passes 192/192 on every scenario.
 - Where the hash fails, the divergence in the harness's runs reduces to a
   Trade-report `maker_order_id` swap at a single price level; per-trade total
@@ -670,12 +670,16 @@ FlashOne — Flash One Technologies' production engine, the harness publisher
 — is included for reference; its `.so` is not publicly available, so the
 numbers are reproducible only under a production license.
 
-| Engine          | static | normal | swing-25 | swing-40 | flash-crash |
-|-----------------|-------:|-------:|---------:|---------:|------------:|
-| Liquibook       | infeasible | 4.33 M/s |   4.61 M/s |   4.82 M/s |    4.86 M/s |
-| QuantCup        |  8.50 M/s | 6.93 M/s |   1.60 M/s |   0.94 M/s |    0.57 M/s |
-| Exchange-core   |  1.51 M/s | 1.56 M/s |   1.32 M/s |   1.31 M/s |    1.20 M/s |
-| FlashOne        | 40.95 M/s | 31.09 M/s | 31.41 M/s | 31.81 M/s | 32.69 M/s |
+The rows are ordered by **worst-case throughput** — the lowest of each engine's
+five scenario results — because a venue must survive its worst regime, not its
+best; the scenario that produces each worst case is shown alongside:
+
+| Engine        | Worst-case throughput | Weakest scenario |
+|---------------|----------------------:|:-----------------|
+| FlashOne      | 31.09 M/s             | `normal`         |
+| Exchange-core | 1.20 M/s              | `flash-crash`    |
+| QuantCup      | 0.57 M/s              | `flash-crash`    |
+| Liquibook     | 0.03 M/s              | `static`         |
 
 Architectures: Liquibook is a price-keyed multimap per side; QuantCup is
 a flat price-indexed array; Exchange-core is a direct-access order book on
@@ -684,13 +688,16 @@ scenarios — that is the point of having five. QuantCup is fastest while the
 walk stays narrow (8.5 M/s on `static`) and collapses ~15× as it spreads
 (0.57 M/s on `flash-crash`'s ~38,000-tick range). Liquibook is the mirror
 image: mildly volatility-sensitive at 4.3–4.9 M/s on the moving scenarios,
-and infeasible under `static`'s ~21,000-order standing book (≈0.03 M/s,
+and very slow under `static`'s ~21,000-order standing book (≈0.03 M/s,
 ~67 s per trial — past the 60 s/trial floor), where its node-per-resting-order
 design pays most: every new order allocates a `SimpleOrder` on the timed path,
 which the deepest book pays ~1M times. The slowness is the engine's design,
 not a software cap. Exchange-core is comparatively flat at
 1.2–1.6 M/s, dominated by its per-message JNI crossing. FlashOne spans
-31.1–41.0 M/s. See
+31.1–41.0 M/s. Ranked by that nemesis — each engine's worst case — flatness
+wins: Exchange-core's 1.20 M/s floor outranks QuantCup's 0.57 and Liquibook's
+0.03 M/s even though it never tops a single scenario, and FlashOne's 31.09 leads
+outright — an engine is only as fast as the regime it handles worst. See
 `docs/METHODOLOGY.md` for the five scenarios and `scripts/run_challenge.py`
 for the full sweep.
 
