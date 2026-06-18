@@ -70,7 +70,7 @@ capacity — and the harness enforces the visible half: immediately after the
 prebuild pass and before it starts the clock, it asserts the book is empty
 (`engine_query_best_bid() == INT64_MIN` and `engine_query_best_ask() ==
 INT64_MAX`). An engine that rested orders during prebuild is gated INVALID with
-an `Anti-cheat: pre-start book NON-EMPTY` line, regardless of whether the output
+an `Anti-cheat: pre-start book not empty by the API sentinels` line, regardless of whether the output
 hash matches. `tests/prebuild_insert_cheat.cpp` is the executable
 demonstration: it inserts during prebuild and is caught here in a plain perf
 run.

@@ -482,14 +482,14 @@ useful, omit otherwise:
      clock starts, the harness asserts your book is empty
      (`engine_query_best_bid() == INT64_MIN` and `engine_query_best_ask() ==
      INT64_MAX`). If prebuild rested any order, the book is non-empty here →
-     `Anti-cheat: pre-start book NON-EMPTY` → **INVALID**, whatever the hash.
+     `Anti-cheat: pre-start book not empty by the API sentinels` → **INVALID**, whatever the hash.
   2. **Prebuild-time bound.** The harness times the prebuild pass and compares
      it to the timed run. Honest translation is a small fraction of matching
      (the baselines land at 0.02–0.53×), so a prebuild that *rivals* the run is
      the signature of matcher work hidden there — e.g. a "shadow" pre-matcher
      that matches into a private structure (keeping the queryable book empty to
      slip past guard 1) and replays cached results on the clock. Above 2× the
-     harness prints a loud `Anti-cheat: pre-build ran N× the timed window` flag;
+     harness prints a loud `Anti-cheat: pre-build ran Nx the timed window` flag;
      above 4× — a level no honest translation reaches — it gates the run
      **INVALID**.
 
@@ -570,9 +570,9 @@ If it is not VALID, diagnose with this table:
 | `State audit: FAIL` | `engine_query_*` do not reflect the real book | Implement best-bid / best-ask / depth against the live book; return `INT64_MIN` / `INT64_MAX` when a side is empty. |
 | `engine crashed (fatal signal)` | Adapter bug (segfault) | Check the engine handle is initialised and the transport pointers are saved in `engine_init`. |
 | `Affinity: matcher=FAILED` or `drainer=FAILED` (verdict INVALID despite `Status: PASS`) | The harness couldn't pin the matcher / drainer thread to the requested core | Pass `--matcher-core <N>` and `--drainer-core <M>` with cores that are online on your box. The default 2 / 3 may not exist (small machines) or may not be reachable from the harness's CPU set; pick any two adjacent cores >= 0. |
-| `Status: NO REFERENCE` | The (scenario, seed) pair has no published hash in `reference/correctness_hash.txt` (e.g. a custom seed or scenario) | The five standard scenarios at the canonical seed 23 all have published hashes — if you’re seeing NO REFERENCE on `normal` at seed 23, the reference file is missing or corrupted. On a custom (scenario, seed) the harness has nothing to compare against and the run is reported INVALID; either pick a published (scenario, seed) or add an entry to `reference/correctness_hash.txt` via `./harness --baseline liquibook --scenario <name> --seed <n> --write-reference`. |
+| `Status: NO REFERENCE` | The (scenario, seed) pair has no published hash in `reference/correctness_hash.txt` (e.g. a custom seed or scenario) | The five standard scenarios at the canonical seed 23 all have published hashes — if you're seeing NO REFERENCE on `normal` at seed 23, the reference file is missing or corrupted. On a custom (scenario, seed) the harness has nothing to compare against and the run is reported INVALID; either pick a published (scenario, seed) or add an entry to `reference/correctness_hash.txt` via `./harness --baseline liquibook --scenario <name> --seed <n> --write-reference`. |
 
-To debug a `Status: FAIL`, the engine's report stream differs from
+On a `Status: FAIL`, the engine's report stream differs from
 `reference/canonical_output.txt.gz` — the canonical text that hashes to the
 reference, one line per report (the per-type line format is in
 `docs/METHODOLOGY.md`). The shipped `.gz` covers `normal` only; for the four

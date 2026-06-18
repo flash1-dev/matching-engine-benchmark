@@ -96,6 +96,11 @@ A full challenge is **10 perf runs + 1 audit run** per scenario, driven by
 `scripts/run_challenge.py`. The result is VALID only if every perf hash passes
 and the audit passes. Separating the passes keeps the measured runs free of any
 anti-cheat overhead while still validating the book. See `docs/ANTI_CHEAT.md`.
+By default `run_challenge.py` runs all five scenarios and reports the engine's
+**worst-case** throughput — the lowest of the five, with the scenario that
+produces it — as its definitional result, since a venue must survive its worst
+regime, not its best (`--scenario` narrows to one; `--compare` ranks engines by
+worst case).
 
 ## The reference engines
 
@@ -124,30 +129,17 @@ scenario that produces each worst case is shown alongside:
 | QuantCup      | 0.57 M/s              | `flash-crash`    |
 | Liquibook     | 0.03 M/s              | `static`         |
 
-
 FlashOne is the harness publisher's production engine, shown as a reference.
-It stands only as a target to beat on fully public, audited work: the harness, 
-baselines, workload, and hashes that define that target are all open, so anyone can try. 
-See `discoveries.md` for per-engine architecture notes, the eleven further surveyed engines, 
+It stands only as a target to beat on fully public, audited work: the harness,
+baselines, workload, and hashes that define that target are all open, so anyone can try.
+See `discoveries.md` for per-engine architecture notes, the eleven further surveyed engines,
 and how to interpret each row.
-
-**Order-identifier tracking.** On every cancel, modify, and fill, an engine
-must map the harness's client order id back to its own internal order handle.
-So that this step is measured apples-to-apples against engines that allocate
-their order tables statically — QuantCup, for instance, indexes a flat
-price array directly — the reference adapters perform that translation with
-flat-array direct indexing rather than a hash map (no adapter-side locks, no
-per-message allocation; each adapter README documents its mapping). Flat
-indexing is also the
-more faithful model of real order-entry protocols, where a session assigns
-increasing, dense order identifiers — the sequential UserRefNum discipline of
-Nasdaq OUCH 5.0[^ouch] — that a direct index serves exactly.
 
 Measure on your own platform:
 
 ```sh
 scripts/build_baselines.sh all
-scripts/run_challenge.py --compare liquibook quantcup exchange_core --all-scenarios
+scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ranking
 ```
 
 ### Surveyed engines vs. their published figures
@@ -155,45 +147,21 @@ scripts/run_challenge.py --compare liquibook quantcup exchange_core --all-scenar
 Beyond the three calibration baselines, the harness has been run against the
 eleven third-party engines in `additional_references/` — each selected for
 >100 GitHub stars, a published >10 M orders/sec claim, or wide use as a
-teaching reference, and wrapped by a worked adapter. The figure each project
-publishes was measured under its own workload and its own definition of an
-operation — typically a single-threaded, in-process, single-symbol
-micro-benchmark with no cancels or modifies and no inter-thread report drain.
-The harness column is the same engine under one realistic workload: ~95% cancel
-/ 15% IOC, a GBM mid-price walk with a standing book the engine must carry,
-and every report drained to a separate core.
-The two are **not** like-for-like; the table records both so the difference is
-visible (per-engine conditions and correctness findings are in
-`discoveries.md`).
+teaching reference, and wrapped by a worked adapter. Rows are ordered by each project's published claim, highest first.
 
-| Engine       | Harness `normal` (full report drainage) | Project's published figure |
-|--------------|----------------------------------------:|---------------------------:|
-| piyush       | 4.67 M/s (INVALID — state audit)        | ~160 M/s                   |
-| philipgreat  | 4.43 M/s (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order")    |
-| limitbook    | 2.72 M/s (INVALID — over-match)         | ~30 M/s                    |
-| robaho       | 3.02 M/s (INVALID — price field)        | 10–22 M/s                  |
-| geseq        | infeasible (>60 s/trial; VALID with fix in audit — engine price-predicate patch) | 12.5–21 M/s                |
-| mansoor      | 0.03 M/s                                | >20 M/s                    |
-| jxm35        | 2.20 M/s (INVALID — untraced)           | 14 M/s                     |
-| femto_go     | infeasible (>60 s/trial)                | >10 M/s                    |
-| CppTrader    | 7.26 M/s (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s                   |
-| OrderBook-rs | 0.56 M/s (INVALID — priority only)      | latency-focused            |
-| Tzadiko      | 3.45 M/s (VALID with fix — engine deadlock patch) | not headlined              |
-
-Every engine that advertises a double-digit-million-per-second (or higher)
-figure lands in single digits of M/s — or does not complete — once reports
-cross a thread boundary under a cancel-heavy workload with a standing book to
-carry; FlashOne sustains 31.1–41.0 M/s across the same five scenarios
-(above). Correctness separates the field further: of the eleven, only CppTrader,
-Tzadiko (after an engine deadlock patch), philipgreat (after three engine
-correctness patches), geseq (after one), femto_go, and mansoor reproduce the
-byte-identical consensus everywhere they run; limitbook over-matches (a
-quantity-conservation violation), OrderBook-rs and robaho each differ in a
-single field (counterparty identity and execution price respectively, with
-quantities correct), jxm35 diverges for reasons we did not trace to source,
-and piyush fails the state audit on the moving scenarios. See
-`discoveries.md` for the specific findings and the VALID / INVALID
-criterion.
+| Engine       | Harness worst-case (weakest scenario)   | Project's published figure |
+|:-------------|:----------------------------------------|---------------------------:|
+| piyush       | 3.17 M/s, `flash-crash` (INVALID — state audit) | ~160 M/s |
+| philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") |
+| limitbook    | 1.15 M/s, `static` (INVALID — over-match) | ~30 M/s |
+| robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s |
+| geseq        | 0.0071 M/s, `normal` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s |
+| mansoor      | 0.03 M/s, `normal` | >20 M/s |
+| jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s |
+| femto_go     | 0.0069 M/s, `static` (VALID on `static`/`normal`; INVALID on others) | >10 M/s |
+| CppTrader    | 7.26 M/s, `normal` (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s |
+| OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused |
+| Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined |
 
 These findings are offered back, not aimed at anyone. Each is a reproducible,
 time-stamped *snapshot* of a specific commit — not a verdict on a project's
@@ -255,13 +223,15 @@ discoveries.md          observations the harness produced against the eleven sur
 
 ## FAQ
 
-Q. Why do you do this?
+Q. Why did you build this?
 
-A. To give the community a neutral, reproducible way to measure a matching engine's throughput and check its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. One consequence is that the paper's title — *"The World's Fastest Matching Engine Algorithm"* — is openly falsifiable: beat FlashOne's published numbers on the same work and the title is wrong, and that is a test we are openly inviting. If you hit comparable or higher numbers with your own design, or you think the method is unfair, we would love to know.
+A. To give the community a neutral, reproducible way to measure a matching engine's throughput and verify its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. That oracle — the byte-identical consensus of three independent reference engines — has already surfaced real bugs in several open-source matching engines, including a latent one in a codebase nearly nine years old.
+
+The same openness applies to our own claim: the paper's title — *"The World's Fastest Matching Engine Algorithm"* — is deliberately falsifiable. Beat FlashOne's published numbers on the same work and the title is wrong — a test we are openly inviting. If you reach comparable or higher numbers with your own design, or you think the method is unfair, we would love to hear from you.
 
 Q. Isn't this a self-serving benchmark — any conflict of interest in writing your own benchmark?
 
-A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical agreement of three independent open-source engines (Liquibook, QuantCup, Exchange-core), not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, thus anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself. 
+A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical agreement of three independent open-source engines (Liquibook, QuantCup, Exchange-core), not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself.
 
 Q. I only want to check that my engine is correct — can I ignore the throughput number?
 
@@ -269,7 +239,7 @@ A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the 
 
 Q. Isn't a fast matching engine easy to build?
 
-A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. Almost every public implementation is a variant of the same idea — a linked-list order queue inside a pre-allocated, statically allocated contiguous region — yet, before our work, no one had pinned down the optimal size of that region or how those links are best implemented.
+A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. Almost every public implementation is a variant of the same idea — a linked-list order queue inside a statically allocated contiguous region — yet, before our work, no one had pinned down the optimal size of that region or how those links are best implemented.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
@@ -301,7 +271,6 @@ the paper; the notes below cite the specific sources behind each claim.
 [^cancel]: Modern equity order flow is cancel-dominated — roughly 95% of orders are cancelled and trade-to-order ratios are only a few percent: Marta Khomyn and Tālis J. Putniņš, "Algos gone wild: What drives the extreme order cancellation rates in modern markets?," *Journal of Banking & Finance* 129, 2021, 106170 (doi:10.1016/j.jbankfin.2021.106170); U.S. SEC, *Quote Lifetime Distributions* (2013) and *Trade-to-Order Volume Ratios* (2022).
 [^ioc]: The material share of immediate-or-cancel (IOC) liquidity-taking instructions in real order flow: Sida Li, Mao Ye, and Miles Zheng, "Refusing the Best Price?," *Journal of Financial Economics* 147(2), 2023, 317–337. doi:10.1016/j.jfineco.2022.11.004
 [^depth]: Heavy-tailed / power-law limit-order-book depth profiles: Jean-Philippe Bouchaud, Marc Mézard, and Marc Potters, "Statistical properties of stock order books," *Quantitative Finance* 2, 2002; Rama Cont, Sasha Stoikov, and Rishi Talreja, "A stochastic model for order book dynamics," Columbia University, 2010; Martin D. Gould et al., "Limit order books," *Quantitative Finance* 13(11), 2013; Ilija I. Zovko and J. Doyne Farmer, "The power of patience: A behavioral regularity in limit-order placement," *Quantitative Finance* 2(5), 2002.
-[^ouch]: Nasdaq OUCH 5.0 order-entry protocol: a session assigns each order a `UserRefNum`, a day-unique identifier the protocol requires to be supplied in strictly increasing order — i.e. dense and sequential per session — which a flat direct index resolves in O(1) without a hash map.
 [^liquibook]: Object Computing, Inc. 2013. *Liquibook: An Open Source C++ Order Matching Engine.* <https://github.com/ObjectComputing/liquibook>
 [^quantcup]: QuantCup 1 Contest, 2011 — *Price–Time Matching Engine* (winning entry), sponsored by Tower Research Capital. Original C entry: <https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef>; the harness builds the C++/Boost port at <https://github.com/ajtulloch/quantcup-orderbook> (the upstream pinned in `docs/PATCHES.md`).
 [^exchangecore]: Maksim Zheravin. 2019. *Exchange-core: Ultra-fast matching engine.* <https://github.com/exchange-core/exchange-core>

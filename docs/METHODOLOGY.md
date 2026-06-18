@@ -110,6 +110,20 @@ around each:
 Messages are stable-sorted by synthetic timestamp into wire order, then each is
 assigned a dense, 0-based `sequence_number`.
 
+### Order-identifier tracking
+
+On every cancel, modify, and fill, an engine must map the harness's client
+order id back to its own internal order handle.
+So that this step is measured apples-to-apples against engines that allocate
+their order tables statically — QuantCup, for instance, indexes a flat
+price array directly — the reference adapters perform that translation with
+flat-array direct indexing rather than a hash map (no adapter-side locks, no
+per-message allocation; each adapter README documents its mapping). Flat
+indexing is also the
+more faithful model of real order-entry protocols, where a session assigns
+increasing, dense order identifiers — the sequential UserRefNum discipline of
+Nasdaq OUCH 5.0 — that a direct index serves exactly.
+
 ### The five scenarios
 
 | Scenario | Annualised vol | Target swing | Character |
@@ -230,6 +244,13 @@ passes**. Each run is a fresh process (`scripts/run_challenge.py` drives all
 eleven). Anti-cheat probing happens on every run, so the perf runs are
 indistinguishable from the audit run to the engine, but only the audit run
 compares the probes — the measured runs are never slowed by the check.
+
+Across the five scenarios, `run_challenge.py` reports each engine's
+**worst-case** throughput — the lowest of its five scenario medians, and the
+scenario that produces it — as the engine's definitional result. This is the
+basis for the comparison tables in the README and `discoveries.md`: an engine is
+rated by the regime it handles worst, not its best, because the matcher must
+absorb the burst in whatever regime the market happens to be in.
 
 ### Order-identifier resolution
 

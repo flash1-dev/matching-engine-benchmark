@@ -142,7 +142,7 @@ kind it is:
 - **Engine-state corruption** — the engine's internal bookkeeping breaks in
   a way that can end a run rather than (only) bend the output. We observed
   one such defect in CppTrader off the canonical path (its id index retained
-  a fully-executed order node with a dangling price-level pointer; a later
+  a fully-executed order node with a null price-level pointer; a later
   cancel of that id segfaulted inside the engine) — see its section for the
   verified mechanics and the provenance. The canonical workload does not
   trigger it, so CppTrader's table cells carry ordinary verdicts.
@@ -316,13 +316,34 @@ pinned snapshot:
   against the same engine build.
 - The trigger is **narrower than "any fully-filled crossing modify"**: the
   canonical `normal` realisation contains 39 crossing modifies that fill
-  completely, 38 of them later cancelled, and none trips the defect — the
-  engine's ordinary full-fill path erases the id correctly. We did not pin
-  the exact internal branch that leaves the orphaned index entry, so this is
-  recorded as an observation with verified symptoms rather than an
-  attributed cause. Integrators driving CppTrader's `ModifyOrder` against
-  deep books may want to keep an eye on `_orders` consistency (or run the
-  CppCommon pool assertions in debug builds, which catch it at teardown).
+  completely, 38 of them later cancelled, and none trips the defect.
+- **Root cause — a stale hash-map handle reused across the re-match.**
+  `_orders` is a `CppCommon::HashMap`: open addressing with *backward-shift*
+  deletion, so erasing one key can relocate *other* live keys to earlier
+  buckets. `MarketManager::ModifyOrder` caches the order's `find` iterator
+  (`market_manager.cpp:578`) and reuses it to erase the order *after* the
+  re-match (`:664`). But the re-match (`:631` `MatchLimit`) erases every maker
+  it fully consumes — `ReduceOrder` → `_orders.erase` (`:541`) — and each such
+  erase can shift the aggressor's own bucket. When it does, the `:664` erase
+  fires on the now-stale bucket index: it blanks the wrong slot and leaves the
+  fully-filled aggressor in `_orders` with a null `Level`. The engine's own
+  stop-activation paths re-find by id immediately before erasing
+  (`:1407`/`:1445`, `_orders.erase(_orders.find(Id))`); `ModifyOrder` is the
+  lone post-match erase that trusts the cached handle. New-order insertion
+  (it matches first, inserts only what rests) and `ReplaceOrder` (it erases
+  before matching) are both immune — the defect is `ModifyOrder`-only, and a
+  one-line fix (erase by id / a fresh `find` at `:664`, as the stop paths do)
+  closes it. With `std::unordered_map`'s node stability the original code is
+  correct, which is likely why it shipped.
+- **Why it is load-dependent.** The relocation happens only when the aggressor's
+  bucket collides into a consumed maker's probe run — a hash- and
+  load-geometry property: rare at the canonical `normal` standing book (the 39
+  fully-filled crossing modifies all escape), increasingly likely as the book
+  deepens. An instrumented debug build of the pinned snapshot reproduces it
+  deterministically: at a few thousand resting orders, a fully-filling crossing
+  modify relocates the aggressor's bucket mid-match (verified in the map's
+  backward-shift), the stale erase blanks the wrong slot, and a subsequent
+  cancel null-derefs at `order_book.cpp:199`.
 
 Two operational details worth noting for an integrator:
 
@@ -402,7 +423,7 @@ above the engine — at which point one is no longer measuring the engine.
 > attribution was wrong. The runs were not slow — they were **hung in a
 > deadlock inside the engine** that our adapter triggered by using the
 > engine's own IOC order type. With the two-line correctness patch below, the
-> engine completes every scenario and is **VALID on all five** at 3.4–3.7 M
+> engine completes every scenario and is **VALID on all five** at 3.39–3.7 M
 > msgs/s. We keep the record of the correction here rather than silently replacing
 > it.
 
@@ -450,7 +471,7 @@ native `GetOrderInfos()`.
 Two things are worth taking away. First, the engine's mutex-per-call +
 `std::map<Price, std::list<OrderPointer>>` + `std::shared_ptr<Order>` design
 — costs we previously blamed for the wall-clock failure — in fact sustains
-3.4–3.7 M msgs/s on this workload, mid-pack among the engines surveyed here
+3.39–3.7 M msgs/s on this workload, mid-pack among the engines surveyed here
 and essentially flat from the deep `static` book to the flash-crash walk.
 Second, anyone driving Tzadiko/Orderbook with its own `FillAndKill` type
 will hit the deadlock as shipped: the snapshot commit's IOC path cannot
@@ -545,7 +566,7 @@ How it presents in the harness:
   and drop the `order_map.remove` from `prune_bucket_front` so the id index
   holds exactly the resting set —
   all five scenarios PASS and the (untimed) state audit returns 192/192 on
-  every scenario (the 60 s budget that makes `static` infeasible in the
+  every scenario (the 60 s budget that `static` exceeds in the
   throughput row below does not apply to the audit).
 
 The reference adapter applies all three patches at build time (same pattern as
@@ -581,7 +602,7 @@ How it presents in the harness:
   the consensus fills those 39 at seq 147 — limitbook, which never
   decremented the maker, prints 53.
 
-The reference adapter does not patch this. Unlike the two fixes above, closing
+The reference adapter does not patch this. Unlike the engine fixes above, closing
 it would mean rewriting the engine's matching loop, at which point one is no
 longer measuring the engine; the throughput row below is recorded with the
 engine's output as shipped and marked INVALID — a quantity-conservation
@@ -595,9 +616,13 @@ workload runs per scenario. The workload is calibrated to U.S. equity
 microstructure (see `docs/METHODOLOGY.md`): ~95% cancellation, 15% IOC, ~2%
 duplicate cancels/modifies, a GBM mid-price walk with a standing book the
 engine carries throughout, and full inter-thread report drainage on the
-timed path. A run that exceeds 60 s of wall clock marks that engine/scenario
-cell `infeasible` (the full ten-trial protocol would otherwise spend tens of
-minutes on a single cell).
+timed path. A few engines run past 60 s of wall clock per trial (1–6 min);
+rather than the ten-trial median used elsewhere, each such cell was run once to
+completion to record an actual figure. The harness column below reports each
+engine's **worst-case** — its lowest rate across the five scenarios, with the
+scenario that produced it — the same basis as the reference-baseline table (a
+venue must survive its worst regime); the rows are ordered by each project's
+published claim.
 
 The figures the projects publish were measured under their own workloads,
 with their own definitions of an operation. The table below records both
@@ -605,19 +630,19 @@ numbers so a reader can see the difference in workload — it is not a
 comparison of like with like, and we have not attempted to reproduce the
 projects' own benchmarks under their own conditions.
 
-| Engine       | Harness `normal`, full report drainage | Published figure | Published workload (as described in the project) |
-|--------------|----------------------------------------:|------------------:|--------------------------------------------------|
-| piyush       | 4.67 M/s (INVALID — state audit; stream byte-identical) | ~160 M/s | 10-symbol sharded; in-process trade callback on matcher thread |
-| philipgreat  | 4.43 M/s (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") | two-price pre-seeded dense array; in-process, add-and-match only |
-| limitbook    | 2.72 M/s (INVALID — over-match; quantity not conserved) | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
-| robaho       | 3.02 M/s (INVALID — execution-price field; quantities correct) | 10–22 M/s | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
-| geseq        | infeasible (>60 s / trial; VALID with fix in untimed audits — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
-| mansoor      | 0.03 M/s                                | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
-| jxm35        | 2.20 M/s (INVALID — untraced divergence) | 14 M/s | per-op latency benchmark; trade events not emitted (see above) |
-| femto_go     | infeasible (>60 s / trial; VALID in an untimed audit) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
-| CppTrader    | 7.26 M/s (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
-| OrderBook-rs | 0.56 M/s (INVALID — FIFO-priority divergence; quantities correct) | latency-focused | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
-| Tzadiko      | 3.45 M/s (VALID with fix — engine deadlock patch) | not headlined     | tutorial repo; no published throughput target |
+| Engine       | Harness worst-case (weakest scenario) | Published figure | Published workload (as described in the project) |
+|:-------------|:--------------------------------------|:-----------------|:-------------------------------------------------|
+| piyush       | 3.17 M/s, `flash-crash` (INVALID — state audit) | ~160 M/s | 10-symbol sharded; in-process trade callback on matcher thread |
+| philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") | two-price pre-seeded dense array; in-process, add-and-match only |
+| limitbook    | 1.15 M/s, `static` (INVALID — over-match) | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
+| robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
+| geseq        | 0.0071 M/s, `normal` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
+| mansoor      | 0.03 M/s, `normal`                      | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
+| jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s | per-op latency benchmark; trade events not emitted (see above) |
+| femto_go     | 0.0069 M/s, `static` (VALID on `static`/`normal`; INVALID on others) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
+| CppTrader    | 7.26 M/s, `normal` (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
+| OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
+| Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined     | tutorial repo; no published throughput target |
 
 A reader writing their own engine and measuring it the way the harness does
 should expect numbers in the range above rather than the projects' published
@@ -632,31 +657,33 @@ five scenarios; the INVALID is its cached-best staleness failing the state
 audit on every moving scenario (see *Correctness findings*).
 **OrderBook-rs** completes the run in ~4 s wall time but its report stream
 diverges from consensus on every scenario (a price-time-priority violation —
-wrong counterparty identity — quantities correct). **geseq** and **femto_go** exceed the 60 s
-per-trial wall-clock budget — both are bounded by the per-report cgo
-crossing into the dynamically-loaded Go runtime rather than by their
-matching algorithms — so their figures are recorded as `infeasible`; both
-reproduce the consensus byte-for-byte in untimed audit runs (geseq on all
-five scenarios, femto_go on `normal`, its price-window limit). **Tzadiko**,
-recorded `infeasible (all 5)` in an earlier revision of this table, is
+wrong counterparty identity — quantities correct). **geseq** and **femto_go** run at ~0.007 M/s
+(≈100–330 s/trial), bounded by the per-report cgo crossing into the
+dynamically-loaded Go runtime rather than by their matching algorithms — far
+past the 60 s budget, so each was measured once to completion. **geseq**
+reproduces the consensus byte-for-byte on all five scenarios; **femto_go**
+matches on `static` and `normal` but diverges deterministically on the three
+moving scenarios (its price-window limit — a re-run reproduced the same
+computed hash). **Tzadiko**,
+recorded as not completing in an earlier revision of this table, is
 corrected above: the runs were deadlocked inside the engine, not slow, and
 with the two-site engine patch it is VALID on all five scenarios at
-3.4–3.7 M/s, essentially flat from the deep `static` book to `flash-crash`
+3.39–3.7 M/s, essentially flat from the deep `static` book to `flash-crash`
 (see *Correctness findings*). **CppTrader** is VALID on all five scenarios
-at 7.3–7.6 M/s — the fastest clean reference (see its section for an
+at 7.26–7.6 M/s — the fastest clean reference (see its section for an
 engine defect observed off the canonical path). **mansoor** completes
 `static` (1.97 M/s) and lands right at the 60 s budget edge on `normal`
 (~0.03 M/s, ~60–61 s per run) with a byte-identical stream on both; the
-wider scenarios exceed the budget.
+wider scenarios are very slow.
 
-On **philipgreat**: VALID on the four feasible scenarios after the three
+On **philipgreat**: VALID on all five scenarios after the three
 patches described above; its `normal` throughput of 4.43 M/s sits against a
 published "8 ns per order" (≈125 M/s) figure measured on a two-price
-pre-seeded dense array, and `static` exceeds the 60 s budget outright (a
-fixed-price stream concentrates the ~21,000-order standing book on a handful
-of sparse-map levels whose buckets it scans linearly). **limitbook** is
+pre-seeded dense array, and `static` falls to 0.03 M/s (~62 s/trial, past the 60 s
+budget — a fixed-price stream concentrates the ~21,000-order standing book on a
+handful of sparse-map levels whose buckets it scans linearly). **limitbook** is
 INVALID on every scenario (the partial-fill over-match above — a
-quantity-conservation violation) and measures 2.72 M/s against a published
+quantity-conservation violation) and measures 1.15–2.72 M/s (slowest on `static`) against a published
 3–5 M/s limit-order / ~30 M/s market-and-cancel micro-benchmark.
 
 ### Reference baselines for calibration

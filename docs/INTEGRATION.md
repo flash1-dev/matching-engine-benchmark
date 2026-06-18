@@ -157,8 +157,11 @@ what was changed.
 A `perf` run times the workload and verifies the output hash; an `audit` run
 runs the anti-cheat state audit (`docs/ANTI_CHEAT.md`). A full challenge is 10
 perf runs + 1 audit run — `scripts/run_challenge.py` drives all eleven, reports
-the median throughput, and prints the overall verdict. `--baseline <name>` is
-shorthand for `--engine ./<name>_adapter.so`.
+the median throughput, and prints the overall verdict. By default it runs all
+five scenarios and reports your engine's **worst-case** throughput (the lowest of
+the five, with the scenario that produces it) as its definitional result;
+`--scenario` narrows to one. `--baseline <name>` is shorthand for
+`--engine ./<name>_adapter.so`.
 
 ## Custom transport
 

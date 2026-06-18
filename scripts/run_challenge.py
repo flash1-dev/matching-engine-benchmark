@@ -3,17 +3,18 @@
 run_challenge.py — drive the matching-engine benchmark harness.
 
 A full challenge for one engine + scenario is N perf runs + 1 audit run
-(docs/METHODOLOGY.md, default N = 10). This script runs them, reports the
-median throughput, and prints the overall verdict: VALID only if every perf run
-and the audit run are VALID and all runs agree on the report-stream hash.
+(docs/METHODOLOGY.md, default N = 10), yielding a median throughput and a
+VALID/INVALID verdict for that scenario. By default this script runs all five
+scenarios and reports the engine's **worst-case** throughput — the lowest of the
+five, with the scenario that produces it — as the engine's definitional result,
+because a venue must survive its worst regime, not its best. Pass --scenario to
+measure a single scenario instead.
 
 Examples:
-  scripts/run_challenge.py --baseline liquibook
-  scripts/run_challenge.py --engine ./my_engine.so --scenario flash-crash
-  scripts/run_challenge.py --engine ./cpptrader_adapter.so   # any additional_references/ adapter
-  scripts/run_challenge.py --baseline quantcup --all-scenarios
-  scripts/run_challenge.py --compare liquibook quantcup exchange_core
-  scripts/run_challenge.py --compare ./my_engine.so liquibook --all-scenarios
+  scripts/run_challenge.py --baseline liquibook                # all 5 + worst case
+  scripts/run_challenge.py --engine ./cpptrader_adapter.so     # any additional_references/ adapter
+  scripts/run_challenge.py --engine ./my_engine.so --scenario flash-crash  # one scenario
+  scripts/run_challenge.py --compare liquibook quantcup exchange_core       # worst-case ranking
 
 Exit status is non-zero if any challenge's verdict is not VALID.
 """
@@ -153,12 +154,32 @@ def print_table(headers, rows):
         print(fmt(r))
 
 
+def fmt_mps(x):
+    """Throughput in M/s — 2 decimals, but 2 significant figures below 0.1 so a
+    sub-0.01 M/s engine is not rounded up to 0.01."""
+    if x is None:
+        return "n/a"
+    return f"{x:.2f}" if x >= 0.1 else f"{x:.2g}"
+
+
+def worst_case(grid, label, scenarios):
+    """The engine's definitional result under the worst-case framing: the lowest
+    median throughput across `scenarios`, the scenario that produces it, and the
+    list of scenarios on which the engine is not VALID. Returns
+    (worst_mps, weakest_scenario, invalid_scenarios), or None if nothing measured."""
+    cells = [(s, grid[(label, s)]) for s in scenarios]
+    measured = [(s, c["median"]) for s, c in cells if c["median"] is not None]
+    if not measured:
+        return None
+    weakest, worst_mps = min(measured, key=lambda sc: sc[1])
+    invalid = [s for s, c in cells if c["verdict"] != "VALID"]
+    return worst_mps, weakest, invalid
+
+
 def summary_row(c, first):
     """A table row: `first` is the engine label or scenario name."""
-    if c["median"] is None:
-        mps_cell = "n/a"
-    else:
-        mps_cell = f"{c['median']:.2f} ± {c['stdev']:.2f}"
+    mps_cell = ("n/a" if c["median"] is None
+                else f"{fmt_mps(c['median'])} ± {c['stdev']:.2f}")
     return (first, mps_cell,
             str(c["trades"]), c["correct"], c["audit"], c["verdict"])
 
@@ -176,9 +197,12 @@ def main():
                    help="pre-built baseline: liquibook | quantcup | exchange_core")
     g.add_argument("--compare", nargs="+", metavar="ENGINE",
                    help="compare several engines (baseline names and/or .so paths)")
-    ap.add_argument("--scenario", default="normal", choices=SCENARIOS)
+    ap.add_argument("--scenario", choices=SCENARIOS,
+                    help="run a single scenario only (default: all five, "
+                         "reporting the worst case as the definitional result)")
     ap.add_argument("--all-scenarios", action="store_true",
-                    help="run every scenario instead of just one")
+                    help="run every scenario (this is the default; kept as an "
+                         "explicit override when --scenario is also given)")
     ap.add_argument("--seed", type=int, help="workload seed (default 23, the canonical seed)")
     ap.add_argument("--count", type=int, help="new-order count (default 1000000)")
     ap.add_argument("--perf-runs", type=int, default=DEFAULT_PERF_RUNS,
@@ -190,7 +214,10 @@ def main():
     if not os.path.exists(HARNESS):
         sys.exit("error: ./harness is not built — run `make` first")
 
-    scenarios = SCENARIOS if args.all_scenarios else [args.scenario]
+    # Default: run all five scenarios and report the worst case. A single
+    # --scenario narrows to just that one (no worst-case line then).
+    scenarios = (SCENARIOS if (args.all_scenarios or not args.scenario)
+                 else [args.scenario])
     engines = args.compare if args.compare else [args.engine or args.baseline]
 
     print(f"Challenge: {args.perf_runs} perf runs + 1 audit run per scenario\n")
@@ -202,17 +229,43 @@ def main():
             grid[(engine_label(e), s)] = challenge(e, s, args)
 
     if len(engines) == 1:
-        e = engines[0]
-        print(f"\nSummary — {engine_label(e)}")
+        lbl = engine_label(engines[0])
+        print(f"\nSummary — {lbl}")
         print_table(["Scenario"] + HEADERS[1:],
-                    [summary_row(grid[(engine_label(e), s)], s)
-                     for s in scenarios])
+                    [summary_row(grid[(lbl, s)], s) for s in scenarios])
+        wc = worst_case(grid, lbl, scenarios) if len(scenarios) > 1 else None
+        if wc:
+            worst_mps, weakest, invalid = wc
+            print("\nWorst-case throughput — the definitional result "
+                  "(an engine is only as fast as the regime it handles worst):")
+            print(f"  {fmt_mps(worst_mps)} M/s  on `{weakest}`")
+            print("  Verdict: " + ("VALID on all five scenarios" if not invalid
+                                   else "INVALID — output diverges on "
+                                        + ", ".join(invalid)))
     else:
         for s in scenarios:
             print(f"\nScenario: {s}")
             print_table(["Engine"] + HEADERS[1:],
                         [summary_row(grid[(engine_label(e), s)], engine_label(e))
                          for e in engines])
+        if len(scenarios) > 1:
+            print("\nWorst-case ranking — the definitional result, lowest of each "
+                  "engine's five scenarios (a venue must survive its worst regime):")
+            ranked = sorted(
+                ((engine_label(e), worst_case(grid, engine_label(e), scenarios))
+                 for e in engines),
+                key=lambda x: (x[1][0] if x[1] else float("inf")), reverse=True)
+            rows = []
+            for lbl, wc in ranked:
+                if wc is None:
+                    rows.append((lbl, "n/a", "—", "—"))
+                else:
+                    worst_mps, weakest, invalid = wc
+                    rows.append((lbl, fmt_mps(worst_mps), weakest,
+                                 "VALID" if not invalid
+                                 else f"INVALID ({len(invalid)}/{len(scenarios)})"))
+            print_table(["Engine", "Worst-case M/s", "Weakest scenario", "Verdict"],
+                        rows)
 
     sys.exit(0 if all(c["verdict"] == "VALID" for c in grid.values()) else 1)
 
