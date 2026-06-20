@@ -140,8 +140,6 @@ because the upstream is missing something the harness needs:
 
 - `jxm35_adapter/build.sh` injects a per-fill `notify_trade` hook the engine
   declares but never calls.
-- `geseq_adapter/build.sh` adds a missing `compare()` recheck inside the
-  upstream's inner matching loop.
 - `tzadiko_adapter/build.sh` replaces a Windows-only `localtime_s` call,
   drops a per-match allocation hint, and fixes a self-deadlock in the
   engine's FillAndKill tail-cancel (the public `CancelOrder` re-locked a

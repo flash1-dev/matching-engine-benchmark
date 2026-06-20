@@ -12,7 +12,9 @@ TP="$REPO/third_party"
 mkdir -p "$TP"
 
 GESEQ_URL="https://github.com/geseq/orderbook.git"
-GESEQ_REF="3b9e9cd93cbaac02ba8359d2c3443a962d04c05f"
+# Pinned past the upstream fix for geseq/orderbook#25 (the multi-level price-cross
+# defect we reported); this commit re-applies the predicate, so no patch is needed.
+GESEQ_REF="ba3a635425eb910fdf018643ccac92fb4aca526a"
 
 # ---------------------------------------------------------------------------
 # Toolchain: install a Go SDK under third_party/ if one is not already on PATH.
@@ -58,40 +60,12 @@ else
     git -C "$SRC" reset --hard --quiet "$GESEQ_REF"
 fi
 
-# Patch pricelevel.go in place. The shipped processLimitOrder matches the
-# best-price queue, then iterates pl.GetQueue() without re-checking the
-# price-cross predicate, so an aggressor that exhausts the best level with
-# quantity left over keeps consuming non-crossing levels too. Inject the
-# predicate check that the inner loop is missing. Idempotent — the managed
-# clone is reset --hard above, and the marker check below makes re-running
-# a no-op on an already-patched tree (the ME_GESEQ_SRC path).
-PL="$SRC/pricelevel.go"
-python3 - "$PL" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-src = p.read_text()
-# Check for the inserted segment (a unique post-patch substring) — if it's
-# already there, the file has been patched and re-running is a no-op.
-already_patched_marker = "&& compare(orderQueue.Price()); orderQueue = pl.GetQueue()"
-if already_patched_marker in src:
-    sys.exit(0)
-old = (
-    "\torderQueue = pl.GetQueue()\n"
-    "\tqtyLeft := qty\n"
-    "\tqtyProcessed = decimal.Zero\n"
-    "\tfor orderQueue := pl.GetQueue(); qtyLeft.GreaterThan(decimal.Zero) && orderQueue != nil; orderQueue = pl.GetQueue() {\n"
-)
-new = (
-    "\torderQueue = pl.GetQueue()\n"
-    "\tqtyLeft := qty\n"
-    "\tqtyProcessed = decimal.Zero\n"
-    "\tfor orderQueue := pl.GetQueue(); qtyLeft.GreaterThan(decimal.Zero) && orderQueue != nil && compare(orderQueue.Price()); orderQueue = pl.GetQueue() {\n"
-)
-if old not in src:
-    sys.stderr.write("patch needle not found in pricelevel.go\n")
-    sys.exit(1)
-p.write_text(src.replace(old, new, 1))
-PY
+# No source patch. The shipped processLimitOrder used to match the best-price
+# queue and then iterate pl.GetQueue() without re-checking the price-cross
+# predicate, so an aggressor that exhausted the best level with quantity left
+# over kept consuming non-crossing levels. That was reported as
+# geseq/orderbook#25 and fixed upstream; the pinned commit above re-applies the
+# predicate every iteration, so the engine is built unmodified.
 
 # ---------------------------------------------------------------------------
 # Build the cgo wrapper module. The wrapper imports geseq/orderbook through

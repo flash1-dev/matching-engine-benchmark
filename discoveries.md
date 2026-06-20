@@ -2,7 +2,7 @@
 
 While building reference adapters to demonstrate how third-party matching
 engines are wrapped behind the harness's `matching_engine_api.h` contract, we
-surveyed eleven publicly available matching engines (six C++, three Rust, two Go)
+surveyed twelve publicly available matching engines (seven C++, three Rust, two Go)
 and recorded the observations below. They are reported here so an integrator
 considering one of these engines, or planning a similar in-house benchmark,
 can pick up where we finished rather than re-deriving the same findings.
@@ -15,7 +15,7 @@ what the harness measures on this snapshot and what we read in that source.
 use case; the projects' designs reflect their authors' goals, which may
 differ from ours.**
 
-The eleven adapter sources live in
+The twelve adapter sources live in
 [`additional_references/`](additional_references/); each `build.sh` clones
 its upstream at the pinned commit so any observation here is reproducible.
 
@@ -57,7 +57,8 @@ confined session on the result:
 | chronoxor/CppTrader                             | C++  | `831d10e2a6dd96ac7b063f1d418f6563cbf74c50` | 2026-05-03     |
 | Tzadiko/Orderbook                               | C++  | `dd136dd219ead95796f0e396e9e1395542bf673f` | 2024-04-06     |
 | joaquinbejar/OrderBook-rs                       | Rust | `53b4d2b0a657f4260e316d3a8ac3f0df0fc068bf` | 2026-05-03     |
-| geseq/orderbook                                 | Go   | `3b9e9cd93cbaac02ba8359d2c3443a962d04c05f` | 2024-11-02     |
+| geseq/orderbook                                 | Go   | `ba3a635425eb910fdf018643ccac92fb4aca526a` | 2026-06-20     |
+| geseq/cpp-orderbook                             | C++  | `b58d931b02928a83b4038fa2125edce14adbd90e` | 2026-06-20     |
 | philipgreat/lighting-match-engine-core          | Rust | `381aeda4298524758db37d90c9a69f0fa5c8ca6c` | 2026-04-21     |
 | solarpx/limitbook                               | Rust | `943eadc181d1e35a26abaa5217eeb32bf3304267` | 2025-08-08     |
 | ejyy/femto_go                                   | Go   | `46667a95064bd028e8f0ec1bc6a2f776d86721e3` | 2025-09-16     |
@@ -69,10 +70,11 @@ We surveyed open-source matching engines that satisfied at least one of:
 - significant public traction (>100 GitHub stars), or
 - a high-throughput claim (>10 M orders/sec) advertised in the project's
   README, or
-- adoption as a teaching reference (large tutorial / educational reach).
+- an adapter contributed by the engine's own author.
 
-The eleven engines that met the criterion at integration time (the last three
-were added on 2026-06-09, each on the strength of a >10 M orders/sec claim):
+The twelve engines that met the criterion (the three star/claim engines added on
+2026-06-09 each on the strength of a >10 M orders/sec claim; the twelfth,
+geseq/cpp-orderbook, contributed by its author on 2026-06-20):
 
 - robaho/cpp_orderbook — <https://github.com/robaho/cpp_orderbook>
 - jxm35/LimitOrderBook-MatchingEngine — <https://github.com/jxm35/LimitOrderBook-MatchingEngine>
@@ -82,6 +84,7 @@ were added on 2026-06-09, each on the strength of a >10 M orders/sec claim):
 - Tzadiko/Orderbook — <https://github.com/Tzadiko/Orderbook>
 - joaquinbejar/OrderBook-rs — <https://github.com/joaquinbejar/OrderBook-rs>
 - geseq/orderbook — <https://github.com/geseq/orderbook>
+- geseq/cpp-orderbook — <https://github.com/geseq/cpp-orderbook>
 - philipgreat/lighting-match-engine-core — <https://github.com/philipgreat/lighting-match-engine-core>
 - solarpx/limitbook — <https://github.com/solarpx/limitbook>
 - ejyy/femto_go — <https://github.com/ejyy/femto_go>
@@ -126,7 +129,8 @@ kind it is:
 - **Hard-invariant violation** — the output breaks a rule no order book can be
   configured out of: quantity is not conserved, an order fills past its resting
   size, or a trade prints through the book. limitbook over-matches ~4.3×; the
-  un-patched form of geseq trades through the book. These are wrong against the
+  un-patched form of geseq trades through the book (since fixed upstream — see
+  [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). These are wrong against the
   engine's own contract, not only against ours.
 - **Price-time-priority violation (quantity-conserving)** — quantity is conserved
   and the engine is internally coherent, but one field breaks the price-time
@@ -316,8 +320,11 @@ How it presents in the harness:
 The engine produces a byte-identical report stream against the three-baseline
 consensus, with 192/192 state-audit checks matching, on every scenario it can
 complete inside the wall-clock budget (`swing-25`, the shuffled tape, exceeds
-it). Of the eleven projects surveyed, mansoor is the only one with a fully
-clean correctness signal and no source patch on every feasible scenario.
+it). mansoor and the author-contributed `cpp-orderbook` are the only two of the
+twelve that surfaced no correctness finding at all and needed no source patch —
+`cpp-orderbook` on all five scenarios, mansoor on the two it can finish within
+budget. (CppTrader and geseq are likewise patch-free and VALID on all five, but
+each surfaced a now-resolved defect — see [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md).)
 
 ### joaquinbejar/OrderBook-rs — partial fills demote queue priority
 
@@ -422,7 +429,7 @@ How it presents in the harness:
   lock wrapper is called, not what is cancelled.
 
 The reference adapter applies the fix as its third build-time patch (same
-pattern as jxm35's `notify_trade` and geseq's `compare()` patches), alongside
+pattern as jxm35's `notify_trade` patch), alongside
 the two inherited ones: the Windows-only `localtime_s` call in
 `PruneGoodForDayOrders` (background thread; the workload contains no
 GoodForDay orders) and a `trades.reserve(orders_.size())` at the start of
@@ -441,43 +448,6 @@ will hit the deadlock as shipped: the snapshot commit's IOC path cannot
 execute its partial-fill case at all. A downstream user who never sends
 FillAndKill (or whose IOCs always fill completely or not at all) would never
 see it.
-
-### geseq/orderbook — multi-level crossings ignore the price predicate
-
-In `pricelevel.go::processLimitOrder`, the inner matching loop iterates
-across queues but does not re-check the price-cross predicate inside the
-loop:
-
-```go
-// shipped form — predicate checked only once before entering
-for orderQueue := pl.GetQueue();
-    qtyLeft.GreaterThan(decimal.Zero) && orderQueue != nil;
-    orderQueue = pl.GetQueue() {
-    _, q := orderQueue.process(ob, takerOrderID, qtyLeft)
-    qtyLeft = qtyLeft.Sub(q)
-    qtyProcessed = qtyProcessed.Add(q)
-}
-```
-
-Once the best queue crosses, the loop continues consuming subsequent queues
-regardless of whether their price still crosses the aggressor's limit.
-Concretely: a sell IOC at $32.86 that fills the maker at $32.96 (correctly)
-keeps consuming the next-best maker at $32.74 (incorrectly).
-
-How it presents in the harness:
-
-- Without a source patch, the report-stream hash FAILs on all five
-  scenarios and the state audit mismatches on most.
-- With a one-line patch that adds `&& compare(orderQueue.Price())` to the
-  loop header, all five scenarios PASS and state audit returns 192/192 on
-  every scenario.
-
-The reference adapter applies the patch as a build step (same pattern as
-jxm35's `notify_trade` patch). We did not investigate whether the original
-loop was an oversight or a deliberate simplification — the upstream README
-does not mention multi-level crossing semantics either way. A downstream
-consumer of fills running the un-patched engine would see fills at prices
-that should not have crossed.
 
 ### philipgreat/lighting-match-engine-core — three issues surfaced by the cancel/modify path
 
@@ -533,7 +503,7 @@ How it presents in the harness:
   throughput row below does not apply to the audit).
 
 The reference adapter applies all three patches at build time (same pattern as
-jxm35's `notify_trade` and geseq's `compare()` patches) and documents them in
+jxm35's `notify_trade` patch) and documents them in
 its README. Each is a minimal correctness fix on the cancel/match path and is
 not expected to change the engine's throughput characteristics (the patches
 were not separately benchmarked). We did not investigate whether any was a
@@ -599,13 +569,14 @@ projects' own benchmarks under their own conditions.
 | philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") | two-price pre-seeded dense array; in-process, add-and-match only |
 | limitbook    | 1.15 M/s, `static` (INVALID — over-match) | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
 | robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
-| geseq        | 1.57 M/s, `static` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
+| geseq        | 1.57 M/s, `static` (VALID ×5) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
 | mansoor      | 0.03 M/s, `normal` (VALID ×5) | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
 | jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s | per-op latency benchmark; trade events not emitted (see above) |
 | femto_go     | 2.24 M/s, `normal` (VALID on `static`/`normal`; INVALID on others) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
 | CppTrader    | 7.26 M/s, `normal` (VALID ×5) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
 | OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
 | Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined     | tutorial repo; no published throughput target |
+| cpp-orderbook | 4.28 M/s, `static` (VALID ×5) | none published | author-contributed C++ port of geseq/orderbook; no headline figure |
 
 A reader writing their own engine and measuring it the way the harness does
 should expect numbers in the range above rather than the projects' published
@@ -627,11 +598,18 @@ delivery and the ABI-crossing tax* below). Measured the way the harness
 recommends for a cgo engine — with `engine_on_batch` (`docs/METHODOLOGY.md`) —
 geseq reaches 1.57–1.78 M/s and femto_go 2.24–2.50 M/s on their VALID scenarios,
 their actual matcher throughput, and the table above reports those batched
-figures. **geseq** reproduces the consensus byte-for-byte on all five scenarios;
-**femto_go** matches on `static` and `normal` but diverges deterministically on
+figures. **geseq** reproduces the consensus byte-for-byte on all five scenarios
+(the price-predicate defect it surfaced has since been fixed upstream — see
+[`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)); **femto_go** matches on `static`
+and `normal` but diverges deterministically on
 the three moving scenarios (its price-window limit — a re-run reproduced the
 same computed hash, and the batched and one-at-a-time streams are byte-identical,
-so the divergence is the engine's, not the delivery). **Tzadiko**,
+so the divergence is the engine's, not the delivery). **cpp-orderbook** is the
+same author's C++ port of geseq/orderbook, contributed as a worked adapter; it is
+a native C++ engine (no cgo crossing) and — alongside CppTrader and geseq, one of
+the engines here VALID on all five scenarios with no source patch — runs at 4.28–6.55 M/s,
+slowest on the deep `static` book. Its pinned commit already carries the
+price-cross fix, so its adapter needs no patch. **Tzadiko**,
 recorded as not completing in an earlier revision of this table, is
 corrected above: the runs were deadlocked inside the engine, not slow, and
 with the two-site engine patch it is VALID on all five scenarios at

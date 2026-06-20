@@ -101,3 +101,64 @@ Two operational details worth noting for an integrator (unaffected by the fix):
   maker (resting) order, then with the taker (incoming). The reference
   adapter pairs consecutive callbacks into one harness Trade report and
   tallies the taker's filled quantity for IOC residual accounting.
+
+## geseq/orderbook — multi-level crossings ignore the price predicate
+
+**Status — RESOLVED upstream (2026-06-20).** Reported as geseq/orderbook
+[issue #25](https://github.com/geseq/orderbook/issues/25) and fixed the same day
+in commit
+[`8bf1381`](https://github.com/geseq/orderbook/commit/8bf1381ec90e) — the
+maintainer's reply was *"Thanks for the report. I'll patch this shortly."* The
+fix is the one-line predicate re-check this analysis predicted: the
+`processLimitOrder` execution loop now re-applies the cross predicate on every
+iteration instead of only at the entry guard, so a marketable order stops at its
+own limit rather than consuming the next-best level. The maintainer also added a
+CI correctness gate that runs this benchmark against the engine
+([`ba3a635`](https://github.com/geseq/orderbook/commit/ba3a635425eb)). The
+harness now pins the fixed commit (`ba3a635`), so geseq is VALID on all five
+scenarios with no adapter patch; its published figure is unchanged, since the
+upstream fix is the same one-line predicate the adapter previously applied. The
+pre-fix snapshot it carried was `3b9e9cd`.
+
+The same defect, and the same fix, appeared in the author's C++ port
+[geseq/cpp-orderbook](https://github.com/geseq/cpp-orderbook); there the fix was
+already merged upstream before we integrated it, so that engine's pinned commit
+contains it and its adapter needs no patch (see `discoveries.md`).
+
+### The finding (as recorded before the fix)
+
+In `pricelevel.go::processLimitOrder`, the inner matching loop iterates
+across queues but does not re-check the price-cross predicate inside the
+loop:
+
+```go
+// shipped form — predicate checked only once before entering
+for orderQueue := pl.GetQueue();
+    qtyLeft.GreaterThan(decimal.Zero) && orderQueue != nil;
+    orderQueue = pl.GetQueue() {
+    _, q := orderQueue.process(ob, takerOrderID, qtyLeft)
+    qtyLeft = qtyLeft.Sub(q)
+    qtyProcessed = qtyProcessed.Add(q)
+}
+```
+
+Once the best queue crosses, the loop continues consuming subsequent queues
+regardless of whether their price still crosses the aggressor's limit.
+Concretely: a sell IOC at $32.86 that fills the maker at $32.96 (correctly)
+keeps consuming the next-best maker at $32.74 (incorrectly).
+
+How it presents in the harness:
+
+- Without a source patch, the report-stream hash FAILs on all five
+  scenarios and the state audit mismatches on most.
+- With a one-line patch that adds `&& compare(orderQueue.Price())` to the
+  loop header, all five scenarios PASS and state audit returns 192/192 on
+  every scenario.
+
+The reference adapter applied the patch as a build step (same pattern as
+jxm35's `notify_trade` patch) until the fix landed upstream. We did not
+investigate whether the original
+loop was an oversight or a deliberate simplification — the upstream README
+does not mention multi-level crossing semantics either way. A downstream
+consumer of fills running the un-patched engine would see fills at prices
+that should not have crossed.

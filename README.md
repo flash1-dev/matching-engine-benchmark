@@ -138,7 +138,7 @@ scenario that produces each worst case is shown alongside:
 FlashOne is the harness publisher's production engine, shown as a reference.
 It stands only as a target to beat on fully public, audited work: the harness,
 baselines, workload, and hashes that define that target are all open, so anyone can try.
-See `discoveries.md` for per-engine architecture notes, the eleven further surveyed engines,
+See `discoveries.md` for per-engine architecture notes, the twelve further surveyed engines,
 and how to interpret each row.
 
 Measure on your own platform:
@@ -151,9 +151,9 @@ scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + 
 ### Surveyed engines vs. their published figures
 
 Beyond the three calibration baselines, the harness has been run against the
-eleven third-party engines in `additional_references/` — each selected for
->100 GitHub stars, a published >10 M orders/sec claim, or wide use as a
-teaching reference, and wrapped by a worked adapter. Rows are ordered by each project's published claim, highest first.
+twelve third-party engines in `additional_references/` — each selected for
+>100 GitHub stars, a published >10 M orders/sec claim, or an adapter contributed
+by the engine's own author, and wrapped by a worked adapter. Rows are ordered by each project's published claim, highest first.
 
 | Engine       | Harness worst-case (weakest scenario)   | Project's published figure |
 |:-------------|:----------------------------------------|---------------------------:|
@@ -161,19 +161,21 @@ teaching reference, and wrapped by a worked adapter. Rows are ordered by each pr
 | philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") |
 | limitbook    | 1.15 M/s, `static` (INVALID — over-match) | ~30 M/s |
 | robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s |
-| geseq        | 1.57 M/s, `static` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s |
+| geseq        | 1.57 M/s, `static` (VALID ×5) | 12.5–21 M/s |
 | mansoor      | 0.03 M/s, `normal` (VALID ×5) | >20 M/s |
 | jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s |
 | femto_go     | 2.24 M/s, `normal` (VALID on `static`/`normal`; INVALID on others) | >10 M/s |
 | CppTrader    | 7.26 M/s, `normal` (VALID ×5) | ~3.2 M/s |
 | OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused |
 | Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined |
+| cpp-orderbook | 4.28 M/s, `static` (VALID ×5) | none published |
 
 These findings are offered back, not aimed at anyone. The findings are factual and no judgment has been made for each project. Each is a reproducible,
 time-stamped *snapshot* of a specific commit — not a verdict on a project's
 quality — and several ship with a fix the reference adapter applies
-(`discoveries.md` documents every patch). One — a CppTrader `ModifyOrder` crash —
-was reported upstream and fixed; its history is in `RESOLVED_FINDINGS.md`.
+(`discoveries.md` documents every patch). Two were reported upstream and fixed —
+a CppTrader `ModifyOrder` crash and a geseq multi-level cross-through — and their
+history is in `RESOLVED_FINDINGS.md`.
 
 ## How it works
 
@@ -207,13 +209,13 @@ api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
 src/                    the harness — runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  eleven worked adapter examples for third-party engines (C++, Rust, Go)
+additional_references/  twelve worked adapter examples for third-party engines (C++, Rust, Go)
 patches/                source patches applied to baseline engines (QuantCup)
 reference/              the published canonical report output and its hash
 scripts/                build_baselines.sh, run_challenge.py, compare_results.py
 docs/                   METHODOLOGY, INTEGRATION, ANTI_CHEAT, PATCHES
 tests/                  a SHA-256 self-test and three anti-cheat cheat adapters
-discoveries.md          observations the harness produced against the eleven surveyed engines
+discoveries.md          observations the harness produced against the twelve surveyed engines
 ```
 
 ## Requirements

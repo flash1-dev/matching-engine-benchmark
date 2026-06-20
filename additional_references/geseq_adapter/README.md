@@ -4,7 +4,8 @@ Wraps [geseq/orderbook](https://github.com/geseq/orderbook) behind
 `api/matching_engine_api.h`. geseq/orderbook is a pure-Go limit-order book
 with a callback-style `NotificationHandler` interface.
 
-Pinned commit: `3b9e9cd93cbaac02ba8359d2c3443a962d04c05f`.
+Pinned commit: `ba3a635425eb910fdf018643ccac92fb4aca526a` (past the upstream fix
+for the price-cross defect we reported — see *Engine issue* below).
 
 This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `discoveries.md` at the
@@ -67,11 +68,16 @@ ModifyAck cannot be reconstructed from the callback alone.
   `tick * 10^8`. The engine compares fp directly, so tick ordering is
   preserved bit-for-bit; `d.Int()` recovers the tick exactly on the way back.
 
-A one-line source patch is applied to `pricelevel.go::processLimitOrder`
-at build time. It adds `&& compare(orderQueue.Price())` to the inner
-matching loop's header. See `discoveries.md` for the rationale. `build.sh`
-re-applies the patch on every run (it `git reset --hard`s the pinned
-commit first).
+## Engine issue (resolved upstream)
+
+No source patch. `pricelevel.go::processLimitOrder` once matched the best-price
+queue and then iterated without re-checking the price-cross predicate, so an
+aggressor with quantity left over kept consuming non-crossing levels. That was
+reported as
+[geseq/orderbook#25](https://github.com/geseq/orderbook/issues/25) and fixed
+upstream — the loop now adds `&& compare(orderQueue.Price())` to its header. The
+pinned commit above contains the fix, so the engine builds unmodified. Full
+analysis and resolution are in `../../RESOLVED_FINDINGS.md`.
 
 ## Build / run
 
@@ -86,11 +92,10 @@ bash additional_references/geseq_adapter/build.sh
    is not already on `PATH`. No sudo. Detects `aarch64` vs `x86_64` and
    picks the right tarball.
 2. Clones the engine into `third_party/geseq_orderbook/` at the pinned
-   commit and applies the patch above.
+   commit, which already contains the upstream fix (no patch).
 3. Builds the cgo wrapper under `wrapper/` with `go build
    -buildmode=c-shared`, writing `geseq_adapter.so` at the harness repo
    root.
 
 Override the upstream checkout: `ME_GESEQ_SRC=/path/to/checkout` skips the
-clone (the script still applies the patch — `git reset --hard` your
-checkout first if you want to undo it).
+clone. Point it at a commit that contains the upstream fix (`ba3a635` or later).

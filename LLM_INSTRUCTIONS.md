@@ -432,7 +432,7 @@ boundary, not the matcher.
 ### 4.5 Patching upstream source
 
 If the engine is missing something the harness needs — a per-fill hook with
-maker / taker ids, an inner-loop predicate, a POSIX port — patch the source
+maker / taker ids, a POSIX port — patch the source
 as a build step rather than forking it. Convention: `git reset --hard
 <pinned_sha>` first (so the patch starts from a known state and re-running
 is idempotent), then apply via `sed` or a short Python script. Detect the
@@ -443,9 +443,6 @@ doesn't drift. Worked examples:
 - `additional_references/jxm35_adapter/build.sh` — Python-patches
   `OrderBook.cpp` to inject `__jxm35_adapter_trade_hook` inside `TryMatch`,
   recovering per-fill maker/taker ids.
-- `additional_references/geseq_adapter/build.sh` — Python-patches
-  `pricelevel.go` to add a missing `compare(orderQueue.Price())` predicate
-  inside the matching loop.
 - `additional_references/robaho_adapter/build.sh` — `sed`-patches two
   headers for a C++20 conformance fix (`std::vector<const std::string>` →
   `std::vector<std::string>`).
