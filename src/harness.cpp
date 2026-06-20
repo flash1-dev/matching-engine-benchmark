@@ -91,6 +91,10 @@ bool load_engine(const std::string& path, EngineLib& e) {
            && bind(e.handle, "engine_query_depth_at", e.query_depth_at);
     bind(e.handle, "engine_get_transport", e.get_transport, /*required=*/false);
     bind(e.handle, "engine_prebuild",      e.prebuild,      /*required=*/false);
+    bind(e.handle, "engine_on_batch",      e.on_batch,      /*required=*/false);
+    // Debug/measurement knob: ME_NO_BATCH forces per-message delivery even for
+    // an engine that exports engine_on_batch (for before/after comparisons).
+    if (std::getenv("ME_NO_BATCH")) e.on_batch = nullptr;
     if (!ok) {
         dlclose(e.handle);
         e.handle = nullptr;
@@ -139,6 +143,11 @@ struct PreparedMsg {
         modify_t    md;
     };
 };
+/* engine_on_batch receives a const me_msg_t*; PreparedMsg is the same tagged
+ * layout (type at 0, union at 8), so the prepared array is handed over by
+ * reinterpret_cast with no per-message copy. Keep the layouts identical. */
+static_assert(sizeof(PreparedMsg) == sizeof(me_msg_t),
+              "PreparedMsg must match the me_msg_t ABI layout");
 
 bool file_exists(const std::string& p) {
     struct stat st;
@@ -483,28 +492,52 @@ int main(int argc, char** argv) {
     size_t  audit_cur   = 0;
     int64_t excluded_ns = 0;        // time spent in audit probes, not throughput
 
+    // A book-state probe taken after workload message `i` — timed separately and
+    // excluded from throughput. Identical in perf and audit mode; only whether
+    // the answer is recorded differs. Shared by both dispatch paths below.
+    auto probe = [&](size_t i) {
+        auto p0 = std::chrono::steady_clock::now();
+        const WorkloadMsg& m = workload[i];
+        [[maybe_unused]] int64_t  bid = eng.query_best_bid();
+        [[maybe_unused]] int64_t  ask = eng.query_best_ask();
+        [[maybe_unused]] uint64_t dep = eng.query_depth_at(m.price_ticks, m.side);
+        if (mode == Mode::AUDIT)
+            ut_snaps.push_back({ i, bid, ask, m.price_ticks, m.side, dep });
+        excluded_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now() - p0).count();
+    };
+
     std::printf("Running benchmark (%zu messages, scenario=%s, mode=%s)...\n",
                 workload.size(), scenario.c_str(), mode_name);
     alarm(RUN_TIMEOUT_S);
     auto t0 = std::chrono::steady_clock::now();
 
-    for (size_t i = 0; i < workload.size(); ++i) {
-        dispatch(prepared[i]);
-
-        // Probe — recorded here, excluded from the timed total. The probe
-        // happens identically in perf and audit mode; only what the harness
-        // does with the answers differs.
-        if (audit_cur < audit_idx.size() && i == audit_idx[audit_cur]) {
-            auto p0 = std::chrono::steady_clock::now();
-            const WorkloadMsg& m = workload[i];
-            [[maybe_unused]] int64_t  bid = eng.query_best_bid();
-            [[maybe_unused]] int64_t  ask = eng.query_best_ask();
-            [[maybe_unused]] uint64_t dep = eng.query_depth_at(m.price_ticks, m.side);
-            if (mode == Mode::AUDIT)
-                ut_snaps.push_back({ i, bid, ask, m.price_ticks, m.side, dep });
-            ++audit_cur;
-            excluded_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                               std::chrono::steady_clock::now() - p0).count();
+    if (eng.on_batch) {
+        // Audit-aligned batch delivery: end each batch exactly at the next probe
+        // index, probe, then continue — so the book is inspected at the same
+        // unpredictable per-message points as one-at-a-time delivery, while each
+        // ABI crossing carries a run of messages. The probe call sequence is
+        // identical in perf and audit mode, so the two remain indistinguishable.
+        // (api/matching_engine_api.h: engine_on_batch.)
+        const me_msg_t* base = reinterpret_cast<const me_msg_t*>(prepared.data());
+        size_t start = 0;
+        for (size_t k = 0; k < audit_idx.size(); ++k) {
+            size_t b = audit_idx[k];                       // boundary = a probe index
+            eng.on_batch(base + start, static_cast<uint32_t>(b - start + 1));
+            probe(b);
+            start = b + 1;
+        }
+        if (start < workload.size())                       // tail after the last probe
+            eng.on_batch(base + start, static_cast<uint32_t>(workload.size() - start));
+    } else {
+        for (size_t i = 0; i < workload.size(); ++i) {
+            dispatch(prepared[i]);
+            // Probe happens identically in perf and audit mode; only what the
+            // harness does with the answer differs.
+            if (audit_cur < audit_idx.size() && i == audit_idx[audit_cur]) {
+                probe(i);
+                ++audit_cur;
+            }
         }
     }
     eng.flush();               // pipeline barrier — any deferred work is counted here

@@ -117,13 +117,17 @@ probe indices come from a per-run random seed they cannot be precomputed; the
 seed used is recorded in the result JSON for reproducibility.
 
 Every run probes these points — a perf run just discards the comparison — so an
-engine cannot distinguish a measured run from an audited one.
+engine cannot distinguish a measured run from an audited one. Under batched
+delivery the harness ends each batch exactly at these audit-probe indices, so
+the book is probed at the same per-message points either way (see
+`docs/METHODOLOGY.md`, *Batch delivery*).
 
 ## Held-out seeds: the strongest test
 
-The shipped reference covers `normal` at the canonical seed 23, and its full
-report stream is published (`reference/canonical_output.txt.gz`) so anyone can
-regenerate and verify the hash. That convenience has a limit a determined cheat
+The shipped reference covers every scenario at the canonical seed 23 (its
+`normal` entry being the one whose full report stream is also published,
+`reference/canonical_output.txt.gz`, so anyone can regenerate and verify the
+hash). That convenience has a limit a determined cheat
 could exploit: with the canonical output in hand, an engine could *replay* it to
 reproduce the hash, and *reconstruct* the resting book from those same canonical
 trades to answer the state-audit probes — clearing both checks without doing any

@@ -34,9 +34,10 @@ project's current `main` may already differ.
 
 Each subfolder has a short README that documents the engine's native API
 shape and how the adapter maps it to the harness ABI. Findings — bug
-observations, performance numbers — live exclusively in
-[`../discoveries.md`](../discoveries.md) so they have one place to
-read, update, and (if a project's behavior changes upstream) retire.
+observations, performance numbers — live in
+[`../discoveries.md`](../discoveries.md) (open findings) and
+[`../RESOLVED_FINDINGS.md`](../RESOLVED_FINDINGS.md) (findings fixed upstream) so they have one
+place to read, update, and (if a project's behavior changes upstream) retire.
 
 ## Quick start
 

@@ -7,13 +7,13 @@ and recorded the observations below. They are reported here so an integrator
 considering one of these engines, or planning a similar in-house benchmark,
 can pick up where we finished rather than re-deriving the same findings.
 
-**This document is a snapshot, not a judgment.** Each observation describes
+This document is a snapshot, not a judgment. Each observation describes
 the upstream commit listed under *Snapshot* below; a project's current
 `main` may already differ. The framing throughout is factual and scoped to
 what the harness measures on this snapshot and what we read in that source.
-We draw no conclusion about engineering quality or fitness for any specific
+**We draw no conclusion about engineering quality or fitness for any specific
 use case; the projects' designs reflect their authors' goals, which may
-differ from ours.
+differ from ours.**
 
 The eleven adapter sources live in
 [`additional_references/`](additional_references/); each `build.sh` clones
@@ -142,10 +142,11 @@ kind it is:
 - **Engine-state corruption** — the engine's internal bookkeeping breaks in
   a way that can end a run rather than (only) bend the output. We observed
   one such defect in CppTrader off the canonical path (its id index retained
-  a fully-executed order node with a null price-level pointer; a later
-  cancel of that id segfaulted inside the engine) — see its section for the
-  verified mechanics and the provenance. The canonical workload does not
-  trigger it, so CppTrader's table cells carry ordinary verdicts.
+  a fully-executed order node with a null price-level pointer; a later cancel
+  of that id segfaulted inside the engine); it has since been **fixed
+  upstream** — the verified mechanics, provenance, and resolution are in
+  [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md). The canonical workload does not trigger it, so
+  CppTrader's table cells carry ordinary verdicts.
 
 We flag the distinction so a reader can weigh each divergence on its merits
 rather than reading one INVALID as equivalent to another.
@@ -286,75 +287,6 @@ consensus, with 192/192 state-audit checks matching, on every scenario it can
 complete inside the wall-clock budget (`swing-25`, the shuffled tape, exceeds
 it). Of the eleven projects surveyed, mansoor is the only one with a fully
 clean correctness signal and no source patch on every feasible scenario.
-
-### chronoxor/CppTrader — an order-index corruption observed off the canonical path
-
-On the canonical workload CppTrader is clean: a byte-identical report stream
-against the three-baseline consensus on all five scenarios, with 192/192
-state-audit checks matching on each. We record one engine-level defect
-anyway, because we hit it while stress-testing during the 2026-06-11
-workload re-anchoring and verified its mechanics in a debug build of the
-pinned snapshot:
-
-- Under a development stress configuration (a deeper, time-ordered standing
-  book — not the shipped workload), a one-tick reprice modify that crossed
-  and **filled completely** inside `MarketManager::ModifyOrder`'s re-match
-  left its order node in the engine's id index (`_orders`, the map behind
-  `GetOrder`) — fully executed (`ExecutedQuantity == Quantity`,
-  `LeavesQuantity == 0`) and with its `Level` pointer null (unlinked from
-  its price level at the start of the modify and never re-linked, since
-  nothing remained to rest).
-- A later cancel of that id — which the engine's own index reported as a
-  live order — reached `OrderBook::DeleteOrder`, dereferenced the null level
-  pointer (`order_book.cpp:199`), and crashed. An adapter that keeps its
-  *own* liveness shadow masks the corruption — the stale id is rejected
-  adapter-side, the run completes, and the damage surfaces only as
-  CppCommon's pool assertion at engine teardown (`"Memory leak detected!
-  Allocated memory size must be zero!"` in `PoolMemoryManager::clear`). An
-  adapter that treats the engine's `GetOrder` as the liveness oracle — the
-  engine's own API for the question — crashes. We verified both behaviours
-  against the same engine build.
-- The trigger is **narrower than "any fully-filled crossing modify"**: the
-  canonical `normal` realisation contains 39 crossing modifies that fill
-  completely, 38 of them later cancelled, and none trips the defect.
-- **Root cause — a stale hash-map handle reused across the re-match.**
-  `_orders` is a `CppCommon::HashMap`: open addressing with *backward-shift*
-  deletion, so erasing one key can relocate *other* live keys to earlier
-  buckets. `MarketManager::ModifyOrder` caches the order's `find` iterator
-  (`market_manager.cpp:578`) and reuses it to erase the order *after* the
-  re-match (`:664`). But the re-match (`:631` `MatchLimit`) erases every maker
-  it fully consumes — `ReduceOrder` → `_orders.erase` (`:541`) — and each such
-  erase can shift the aggressor's own bucket. When it does, the `:664` erase
-  fires on the now-stale bucket index: it blanks the wrong slot and leaves the
-  fully-filled aggressor in `_orders` with a null `Level`. The engine's own
-  stop-activation paths re-find by id immediately before erasing
-  (`:1407`/`:1445`, `_orders.erase(_orders.find(Id))`); `ModifyOrder` is the
-  lone post-match erase that trusts the cached handle. New-order insertion
-  (it matches first, inserts only what rests) and `ReplaceOrder` (it erases
-  before matching) are both immune — the defect is `ModifyOrder`-only, and a
-  one-line fix (erase by id / a fresh `find` at `:664`, as the stop paths do)
-  closes it. With `std::unordered_map`'s node stability the original code is
-  correct, which is likely why it shipped.
-- **Why it is load-dependent.** The relocation happens only when the aggressor's
-  bucket collides into a consumed maker's probe run — a hash- and
-  load-geometry property: rare at the canonical `normal` standing book (the 39
-  fully-filled crossing modifies all escape), increasingly likely as the book
-  deepens. An instrumented debug build of the pinned snapshot reproduces it
-  deterministically: at a few thousand resting orders, a fully-filling crossing
-  modify relocates the aggressor's bucket mid-match (verified in the map's
-  backward-shift), the stale erase blanks the wrong slot, and a subsequent
-  cancel null-derefs at `order_book.cpp:199`.
-
-Two operational details worth noting for an integrator:
-
-- `MarketManager::EnableMatching()` is **OFF by default**. Without it the
-  engine silently rests every order without crossing — every aggressor would
-  rest with full unfilled quantity and produce zero Trade reports. The
-  reference adapter enables matching once after the order book is created.
-- `MarketHandler::onExecuteOrder` fires **twice per fill**, first with the
-  maker (resting) order, then with the taker (incoming). The reference
-  adapter pairs consecutive callbacks into one harness Trade report and
-  tallies the taker's filled quantity for IOC residual accounting.
 
 ### joaquinbejar/OrderBook-rs — partial fills demote queue priority
 
@@ -616,7 +548,7 @@ workload runs per scenario. The workload is calibrated to U.S. equity
 microstructure (see `docs/METHODOLOGY.md`): ~95% cancellation, 15% IOC, ~2%
 duplicate cancels/modifies, a GBM mid-price walk with a standing book the
 engine carries throughout, and full inter-thread report drainage on the
-timed path. A few engines run past 60 s of wall clock per trial (1–6 min);
+timed path. A couple of cells run just past 60 s of wall clock per trial (~60–62 s);
 rather than the ten-trial median used elsewhere, each such cell was run once to
 completion to record an actual figure. The harness column below reports each
 engine's **worst-case** — its lowest rate across the five scenarios, with the
@@ -636,11 +568,11 @@ projects' own benchmarks under their own conditions.
 | philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") | two-price pre-seeded dense array; in-process, add-and-match only |
 | limitbook    | 1.15 M/s, `static` (INVALID — over-match) | 3–5 M/s limit, ~30 M/s market/cancel | Criterion single-op micro-benchmarks; in-process, fills returned by value |
 | robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s | insertion-focused micro-benchmark; ~50–70 ns per-op latency |
-| geseq        | 0.0071 M/s, `normal` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
-| mansoor      | 0.03 M/s, `normal`                      | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
+| geseq        | 1.57 M/s, `static` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s, p50 170 ns | per-op micro-benchmark on a single Go goroutine |
+| mansoor      | 0.03 M/s, `normal` (VALID ×5) | >20 M/s           | tight price band, no GBM mid-price walk, no cancels/modifies in the timed path |
 | jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s | per-op latency benchmark; trade events not emitted (see above) |
-| femto_go     | 0.0069 M/s, `static` (VALID on `static`/`normal`; INVALID on others) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
-| CppTrader    | 7.26 M/s, `normal` (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
+| femto_go     | 2.24 M/s, `normal` (VALID on `static`/`normal`; INVALID on others) | >10 M/s, ~70 ns | in-process Go bench; output drained on a sibling goroutine, same process |
+| CppTrader    | 7.26 M/s, `normal` (VALID ×5) | ~3.2 M/s          | NASDAQ ITCH replay, in-process callbacks |
 | OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused | tail-latency HDR-histogram bench suite; README also reports 200k ops/s mixed-workload and 19M ops/s hot-spot |
 | Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined     | tutorial repo; no published throughput target |
 
@@ -657,21 +589,26 @@ five scenarios; the INVALID is its cached-best staleness failing the state
 audit on every moving scenario (see *Correctness findings*).
 **OrderBook-rs** completes the run in ~4 s wall time but its report stream
 diverges from consensus on every scenario (a price-time-priority violation —
-wrong counterparty identity — quantities correct). **geseq** and **femto_go** run at ~0.007 M/s
-(≈100–330 s/trial), bounded by the per-report cgo crossing into the
-dynamically-loaded Go runtime rather than by their matching algorithms — far
-past the 60 s budget, so each was measured once to completion. **geseq**
-reproduces the consensus byte-for-byte on all five scenarios; **femto_go**
-matches on `static` and `normal` but diverges deterministically on the three
-moving scenarios (its price-window limit — a re-run reproduced the same
-computed hash). **Tzadiko**,
+wrong counterparty identity — quantities correct). **geseq** and **femto_go** are Go matchers reached through cgo: driven one
+message at a time they run at ~0.007 M/s (≈100–330 s/trial), bounded by the
+per-call cgo crossing into the Go runtime, not by their matching (see *Batch
+delivery and the ABI-crossing tax* below). Measured the way the harness
+recommends for a cgo engine — with `engine_on_batch` (`docs/METHODOLOGY.md`) —
+geseq reaches 1.57–1.78 M/s and femto_go 2.24–2.50 M/s on their VALID scenarios,
+their actual matcher throughput, and the table above reports those batched
+figures. **geseq** reproduces the consensus byte-for-byte on all five scenarios;
+**femto_go** matches on `static` and `normal` but diverges deterministically on
+the three moving scenarios (its price-window limit — a re-run reproduced the
+same computed hash, and the batched and one-at-a-time streams are byte-identical,
+so the divergence is the engine's, not the delivery). **Tzadiko**,
 recorded as not completing in an earlier revision of this table, is
 corrected above: the runs were deadlocked inside the engine, not slow, and
 with the two-site engine patch it is VALID on all five scenarios at
 3.39–3.7 M/s, essentially flat from the deep `static` book to `flash-crash`
 (see *Correctness findings*). **CppTrader** is VALID on all five scenarios
-at 7.26–7.6 M/s — the fastest clean reference (see its section for an
-engine defect observed off the canonical path). **mansoor** completes
+at 7.26–7.6 M/s — the fastest clean reference (a `ModifyOrder` defect it
+surfaced off the canonical path has since been fixed upstream — see
+[`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). **mansoor** completes
 `static` (1.97 M/s) and lands right at the 60 s budget edge on `normal`
 (~0.03 M/s, ~60–61 s per run) with a byte-identical stream on both; the
 wider scenarios are very slow.
@@ -703,8 +640,8 @@ best; the scenario that produces each worst case is shown alongside:
 
 | Engine        | Worst-case throughput | Weakest scenario |
 |---------------|----------------------:|:-----------------|
-| FlashOne      | 31.09 M/s             | `normal`         |
-| Exchange-core | 1.20 M/s              | `flash-crash`    |
+| FlashOne      | 33.20 M/s             | `normal`         |
+| Exchange-core | 1.40 M/s              | `flash-crash`    |
 | QuantCup      | 0.57 M/s              | `flash-crash`    |
 | Liquibook     | 0.03 M/s              | `static`         |
 
@@ -720,10 +657,11 @@ and very slow under `static`'s ~21,000-order standing book (≈0.03 M/s,
 design pays most: every new order allocates a `SimpleOrder` on the timed path,
 which the deepest book pays ~1M times. The slowness is the engine's design,
 not a software cap. Exchange-core is comparatively flat at
-1.2–1.6 M/s, dominated by its per-message JNI crossing. FlashOne spans
-31.1–41.0 M/s. Ranked by that nemesis — each engine's worst case — flatness
-wins: Exchange-core's 1.20 M/s floor outranks QuantCup's 0.57 and Liquibook's
-0.03 M/s even though it never tops a single scenario, and FlashOne's 31.09 leads
+~1.4–2.0 M/s, its per-message JNI cost amortized by the harness's batch
+delivery (see *Batch delivery: measuring the matcher, not the boundary*,
+below). FlashOne spans 33.2–44.5 M/s. Ranked by that nemesis — each engine's worst case — flatness
+wins: Exchange-core's 1.40 M/s floor outranks QuantCup's 0.57 and Liquibook's
+0.03 M/s even though it never tops a single scenario, and FlashOne's 33.20 leads
 outright — an engine is only as fast as the regime it handles worst. See
 `docs/METHODOLOGY.md` for the five scenarios and `scripts/run_challenge.py`
 for the full sweep.
@@ -747,10 +685,6 @@ canonical realisations carry the same standing-book and fill regime
 scenario for scenario (see `docs/METHODOLOGY.md`, *The standing book*) — so
 the remaining differences are architectural:
 
-- **Exchange-core** is much slower here: the harness crosses JNI on every
-  message and re-launches the JVM fresh per scenario, while the paper runs
-  Exchange-core fully in-process Java with three JIT warmup passes before
-  each measured pass.
 - **Every engine** pays the `.so` indirect-dispatch boundary per message
   here, FlashOne included, where the paper compiles each engine into the
   measuring binary.
@@ -768,6 +702,40 @@ subtractable. The residual is small and symmetric — it sits on every
 engine equally — but it is real measurement overhead riding on top of
 the engine's normal operation, and the paper's Table 5 numbers carry no
 equivalent.
+
+### Batch delivery: measuring the matcher, not the boundary
+
+The per-message boundary costs just described — JNI on every Exchange-core call,
+the `.so` indirect dispatch on every call for all engines — are a property of how
+the harness *delivers* messages, not of the matchers. Driven one at a time, each
+delivery pays its boundary cost, and for some runtimes that cost dominates.
+Isolating each crossing with a null adapter — one that does no matching, only
+crosses the boundary and acks — gives the per-message tax directly:
+
+The optional `engine_on_batch` entry point (`docs/METHODOLOGY.md`) removes them by
+delivering a run of messages per call — the engine loops internally and pays the
+crossing once per run, not once per message — while the harness ends each run at
+the random audit-probe indices so the state audit and the report-stream hash stay
+byte-identical (every batched figure here is VALID on the same basis as a
+one-at-a-time run). Measured that way (clean solo, ten-trial median):
+
+- **geseq** 0.007 → **1.57–1.78 M/s** (~220×) and **femto_go** 0.007 →
+  **2.24–2.50 M/s** (~325×) on their VALID scenarios — their real matchers, with
+  the cgo tax amortized away.
+- **Exchange-core**, with a Java-side batch method that crosses JNI once per run,
+  gains **+10–38%** per scenario (worst case 1.20 → 1.40 M/s).
+- A fast **native** engine gains only the ~2 ns dispatch — ~8% at the top of the
+  range, nothing lower down; FlashOne's figure moves from 31.09 to 33.20 M/s for
+  this reason, the C/C++/Rust baselines not measurably at all.
+
+So the comparison tables report the batched figure for exactly the four engines it
+moves materially (FlashOne, Exchange-core, geseq, femto_go); every other row is
+delivery-invariant within measurement noise. (The *outbound* report path also
+crosses the boundary — Go→C per report — and batching it too lifts the Go engines
+a further ~30%, but the inbound crossing is the dominant tax and the figures here
+amortize only it.) The net is that batch delivery measures each engine on its
+matching algorithm rather than on the language boundary its matcher happens to sit
+behind — the comparison the harness is for.
 
 ## Reproducing
 

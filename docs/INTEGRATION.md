@@ -1,8 +1,9 @@
 # Integrating an engine
 
 An engine under test is a shared library (`.so`) that exports the C ABI in
-`api/matching_engine_api.h`. The harness loads it with `dlopen` and drives it
-one message at a time. This document is the how-to; the three adapters in
+`api/matching_engine_api.h`. The harness loads it with `dlopen` and, by
+default, drives it one message at a time (see *Batch delivery* in
+`docs/METHODOLOGY.md`). This document is the how-to; the three adapters in
 `adapters/` are the minimal worked examples, and `additional_references/`
 contains eleven more worked adapters (six C++, three Rust, two Go), several of
 which patch the upstream source at build time and may be the closest
@@ -24,7 +25,8 @@ Export these symbols with C linkage:
 | `engine_query_best_ask(void)` | Lowest ask price in ticks, or `INT64_MAX`. |
 | `engine_query_depth_at(int64_t price, uint8_t side)` | Aggregated resting quantity at one price level. |
 
-`engine_get_transport` is optional — see *Custom transport* below.
+`engine_get_transport` is optional — see *Custom transport* below. So are
+`engine_on_batch` and `engine_prebuild` (see `api/matching_engine_api.h`).
 
 ### The engine emits its own reports
 
@@ -126,6 +128,10 @@ implementation. Two patterns are demonstrated in `additional_references/`:
 A JVM engine (e.g. `adapters/exchange_core_adapter.cpp` +
 `adapters/HarnessExchangeCore.java`) embeds a JVM via JNI and calls a thin
 Java helper class.
+
+An engine reached across a managed or foreign runtime (Go/cgo, Java/JNI) should
+implement `engine_on_batch` or its figure measures the ABI boundary, not the
+matcher — the `geseq`, `femto_go`, and Exchange-core reference adapters do this.
 
 ### Patching upstream source
 

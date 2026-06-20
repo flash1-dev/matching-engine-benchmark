@@ -94,10 +94,15 @@ Constraints that shape the adapter:
 Against `normal` the adapter is **VALID** — the report stream reproduces the
 canonical hash byte-for-byte (every report type: OrderAck, Trade, CancelAck,
 ModifyAck, CancelReject, ModifyReject, IoC-residual CancelAck), verified in
-an untimed audit run. But a single perf trial takes **minutes of wall clock
-for the ~2M messages** (>60 s = `infeasible` under the throughput protocol;
-roughly 0.002–0.006 M msgs/s, i.e. hundreds of microseconds per message,
-depending on co-running load).
+an untimed audit run. Measured the way the harness recommends for a cgo engine
+— with `engine_on_batch` (`docs/METHODOLOGY.md` "Batch delivery") — femto_go
+reaches a worst-case **2.24 M/s** on `normal` (VALID on `static` and `normal`;
+INVALID — a deterministic divergence at its price-window limit — on the three
+moving scenarios). Driven **one message at a time**, the default, a single perf
+trial instead takes **minutes of wall clock for the ~2M messages** (~0.007 M
+msgs/s, i.e. hundreds of microseconds per message), bounded by the per-call cgo
+crossing into the Go runtime, not by the matcher — that crossing is exactly what
+batch delivery amortizes.
 
 The README advertises **">10M orders/second, ~70 ns/order (Apple M1)"**. That
 figure is an *in-process* number: `main.go` drives the engine from one

@@ -346,4 +346,17 @@ uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
     return total;
 }
 
+// Optional batch delivery: process a run of messages in one cross-.so call,
+// looping the per-message handlers (inlined under -O3). Same strict in-order
+// semantics as one-at-a-time delivery — removes only the per-message
+// indirect-call dispatch overhead the harness otherwise pays on every message.
+void engine_on_batch(const me_msg_t* msgs, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) {
+        const me_msg_t& m = msgs[i];
+        if (m.type == 0)      engine_on_new_order(&m.no);
+        else if (m.type == 1) engine_on_cancel(&m.c);
+        else                  engine_on_modify(&m.md);
+    }
+}
+
 }  // extern "C"

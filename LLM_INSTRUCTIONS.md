@@ -423,6 +423,12 @@ The ABI is C, so the engine must be reachable from C++:
 - **Rust / Go / C# / etc.:** export a C ABI from the engine (e.g. Rust
   `#[no_mangle] extern "C"`), then the adapter calls those C functions.
 
+Any engine reached across a runtime boundary that charges a per-call entry cost
+(Go/cgo, Java/JNI) should also export **`engine_on_batch`** (§4.6) so the harness
+crosses that boundary once per run instead of once per message — otherwise the
+fixed per-crossing cost dominates and the throughput you measure is the language
+boundary, not the matcher.
+
 ### 4.5 Patching upstream source
 
 If the engine is missing something the harness needs — a per-fill hook with
@@ -455,7 +461,7 @@ README so a reader can audit what changed against upstream.
 
 ### 4.6 Optional ABI hooks
 
-Two symbols in `api/matching_engine_api.h` are optional — export only if
+Three symbols in `api/matching_engine_api.h` are optional — export only if
 useful, omit otherwise:
 
 - **`engine_prebuild(uint8_t msg_type, const void* msg)`** — the harness
@@ -509,8 +515,18 @@ useful, omit otherwise:
   engine already emits into its own lock-free ring and you want the harness's drainer to consume from that
   directly. If the symbol isn't exported, the harness uses its default and
   hands the vtable + handle to `engine_init`.
+- **`engine_on_batch(const me_msg_t* msgs, uint32_t n)`** — accept the workload
+  as runs of `n` tagged messages instead of one `engine_on_*` call per message,
+  so the harness crosses the ABI boundary once per run rather than once per
+  message. Each message is still processed exactly as if delivered alone, in
+  array order, with **no cross-message lookahead** (the contract — and how the
+  hash + state audit enforce it — is in `docs/METHODOLOGY.md` "Batch delivery"
+  and the CONTRACT comment in `api/matching_engine_api.h`). The win is for
+  engines behind a language runtime (§4.4), where the per-crossing cost is real;
+  a native C/C++ engine gains little. If the symbol isn't exported, the harness
+  drives the engine one message at a time as before.
 
-If you don't export either, the harness uses defaults; you lose nothing
+If you don't export any of these, the harness uses defaults; you lose nothing
 correctness-wise, only the small perf hoist that prebuild provides.
 
 ---

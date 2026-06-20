@@ -74,7 +74,12 @@ and the ordinary investor quietly pays the difference.[^marketquality]
 ## What it measures
 
 A single matching engine on one symbol. The harness drives it one message at a
-time through ~2.0M new/cancel/modify messages; the **engine emits its own
+time through ~2.0M new/cancel/modify messages; one-at-a-time is the default, but
+an engine may export the optional `engine_on_batch` entry point so the harness
+delivers messages in runs (one boundary crossing per run; per-message processing
+unchanged) — recommended for engines behind a language runtime (Go/cgo, Java/JNI)
+so the boundary cost is amortized rather than measured (`docs/METHODOLOGY.md`).
+The **engine emits its own
 report stream** (OrderAck / Trade / CancelAck / ModifyAck / CancelReject /
 ModifyReject) over an inter-thread transport drained on an adjacent core — so
 the measured throughput includes the
@@ -112,7 +117,8 @@ narrow band (`static`) and collapses ~15× as the walk spreads
 (`flash-crash`); Liquibook's node-per-order multimap is the opposite —
 mildly volatility-sensitive, but it pays per resting order and collapses
 under `static`'s ~21,000-order standing book; Exchange-core is roughly flat
-but pays a JNI crossing per message. All three nonetheless produce a
+but crosses into the JVM per message — a JNI cost the harness's batch delivery
+amortizes (`docs/METHODOLOGY.md`). All three nonetheless produce a
 byte-identical output stream — every report, not just trades — and that
 agreement is the correctness reference.
 
@@ -124,8 +130,8 @@ scenario that produces each worst case is shown alongside:
 
 | Engine        | Worst-case throughput | Weakest scenario |
 |---------------|----------------------:|:-----------------|
-| FlashOne      | 31.09 M/s             | `normal`         |
-| Exchange-core | 1.20 M/s              | `flash-crash`    |
+| FlashOne      | 33.20 M/s             | `normal`         |
+| Exchange-core | 1.40 M/s              | `flash-crash`    |
 | QuantCup      | 0.57 M/s              | `flash-crash`    |
 | Liquibook     | 0.03 M/s              | `static`         |
 
@@ -155,18 +161,19 @@ teaching reference, and wrapped by a worked adapter. Rows are ordered by each pr
 | philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") |
 | limitbook    | 1.15 M/s, `static` (INVALID — over-match) | ~30 M/s |
 | robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s |
-| geseq        | 0.0071 M/s, `normal` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s |
-| mansoor      | 0.03 M/s, `normal` | >20 M/s |
+| geseq        | 1.57 M/s, `static` (VALID with fix — engine price-predicate patch) | 12.5–21 M/s |
+| mansoor      | 0.03 M/s, `normal` (VALID ×5) | >20 M/s |
 | jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s |
-| femto_go     | 0.0069 M/s, `static` (VALID on `static`/`normal`; INVALID on others) | >10 M/s |
-| CppTrader    | 7.26 M/s, `normal` (VALID on canonical; INVALID on an off-canonical deeper-book dev stress variant — order-index corruption) | ~3.2 M/s |
+| femto_go     | 2.24 M/s, `normal` (VALID on `static`/`normal`; INVALID on others) | >10 M/s |
+| CppTrader    | 7.26 M/s, `normal` (VALID ×5) | ~3.2 M/s |
 | OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused |
 | Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined |
 
-These findings are offered back, not aimed at anyone. Each is a reproducible,
+These findings are offered back, not aimed at anyone. The findings are factual and no judgment has been made for each project. Each is a reproducible,
 time-stamped *snapshot* of a specific commit — not a verdict on a project's
 quality — and several ship with a fix the reference adapter applies
-(`discoveries.md` documents every patch).
+(`discoveries.md` documents every patch). One — a CppTrader `ModifyOrder` crash —
+was reported upstream and fixed; its history is in `RESOLVED_FINDINGS.md`.
 
 ## How it works
 

@@ -35,6 +35,12 @@ ModifyAck cannot be reconstructed from the callback alone.
 - Cgo `c-shared`: a Go `package main` with `//export` directives is built
   with `go build -buildmode=c-shared` to produce `geseq_adapter.so` with
   plain C symbols the harness's `dlopen` resolves directly. No C++ shim.
+- **Batch delivery**: the adapter also exports `engine_on_batch`, so the
+  harness delivers a run of messages per cgo crossing instead of one
+  `AddOrder` / `CancelOrder` per crossing. Geseq's published figure is the
+  batched one; without `engine_on_batch` the run measures the per-call cgo
+  boundary into the Go runtime, not the matcher. See `docs/METHODOLOGY.md`
+  "Batch delivery".
 - A `harnessHandler` implements `NotificationHandler`. `PutTrade` emits the
   harness Trade report (carrying `gCurSeq`, the per-call seq the adapter
   sets before each `AddOrder`) and decrements the maker's shadow remainder.

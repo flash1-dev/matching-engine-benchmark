@@ -223,11 +223,11 @@ std::vector<Msg> generate(const Scenario& sc, size_t count, uint32_t seed) {
         if (is_ioc) { now += 1; continue; }              // IOC: no modify, no cancel
 
         // Optional modify: a quantity increase, ~80% of the time also a 1-tick
-        // reprice. Under the production modify rule both a price change and a
-        // quantity increase are handled as cancel + reinsert; only a pure
-        // quantity decrease at an unchanged price keeps queue priority, and the
-        // canonical workload deliberately contains none (see docs/METHODOLOGY.md)
-        // so the three-engine reference consensus is exact.
+        // reprice. Under standard price-time-priority modify semantics both a
+        // price change and a quantity increase are handled as cancel + reinsert;
+        // only a pure quantity decrease at an unchanged price keeps queue
+        // priority, and the canonical workload deliberately contains none (see
+        // docs/METHODOLOGY.md) so the three-engine reference consensus is exact.
         bool     modified = false;
         int64_t  mprice   = n.price_ticks;
         uint32_t mqty     = n.qty + 1;                        // quantity increase

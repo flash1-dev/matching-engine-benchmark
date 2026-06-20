@@ -157,6 +157,112 @@ public final class HarnessExchangeCore {
         return n;
     }
 
+    /* ---- Batch path --------------------------------------------------------
+     * Process a run of messages in ONE JNI call, producing the full
+     * me_report_t (64-byte) report stream directly into outB; the C++ side just
+     * transports it. This amortizes the per-message JNI crossing the way the Go
+     * adapters amortize cgo. inB wraps the harness's me_msg_t (40-byte) batch;
+     * onBatch processes [start, n) until the input is exhausted or outB is near
+     * full, returning (messagesConsumed << 32) | reportsWritten so the C++ side
+     * can drain outB and resume. Report fields mirror emit_ack /
+     * emit_staged_trades in exchange_core_adapter.cpp exactly. The per-message
+     * onNew/onCancel/onModify above are untouched (the ME_NO_BATCH path). */
+    private ByteBuffer inB, outB;
+    public void setBatchIn(ByteBuffer in)   { inB  = in.order(ByteOrder.LITTLE_ENDIAN); }
+    public void setBatchOut(ByteBuffer out)  { outB = out.order(ByteOrder.LITTLE_ENDIAN); }
+
+    private int wc;                                  // me_report_t records written this call
+    private void rep(int type, int side, long seq, long oid, long price, int qty,
+                     long maker, long taker) {
+        int o = wc << 6;                             // record size = 64 bytes
+        outB.put(o,       (byte) type);
+        outB.put(o + 1,   (byte) side);
+        outB.putLong(o + 8,  seq);
+        outB.putLong(o + 16, oid);
+        outB.putLong(o + 24, price);
+        outB.putInt (o + 32, qty);
+        outB.putLong(o + 40, maker);
+        outB.putLong(o + 48, taker);
+        wc++;
+    }
+    private long repTrades(MatcherTradeEvent evt, long taker, long seq) {
+        long filled = 0;
+        for (; evt != null; evt = evt.nextEvent) {
+            if (evt.eventType != MatcherEventType.TRADE) continue;
+            rep(1 /*ME_TRADE*/, 0, seq, 0, evt.price, (int) evt.size,
+                evt.matchedOrderId, taker);
+            filled += evt.size;
+        }
+        return filled;
+    }
+
+    public long onBatch(int start, int n) {
+        wc = 0;
+        final int cap = outB.capacity() >> 6;        // record capacity
+        int i = start;
+        for (; i < n; i++) {
+            if (cap - wc < 2048) break;              // reserve one message's worst case
+            final int  b    = i * 40;                // me_msg_t stride
+            final int  type = inB.get(b) & 0xff;
+            final long oid  = inB.getLong(b + 8);
+            final long seq  = inB.getLong(b + 16);
+            if (type == 0) {                          // NEW
+                final long price = inB.getLong(b + 24);
+                final int  qty   = inB.getInt(b + 32);
+                final int  side  = inB.get(b + 36) & 0xff;
+                final int  ioc   = inB.get(b + 37) & 0xff;
+                rep(0 /*ME_ORDER_ACK*/, side, seq, oid, price, qty, 0, 0);
+                cmd.command         = OrderCommandType.PLACE_ORDER;
+                cmd.orderId         = oid;   cmd.uid = UID;
+                cmd.price           = price; cmd.reserveBidPrice = price;
+                cmd.size            = qty;
+                cmd.action          = (side == 0) ? OrderAction.BID : OrderAction.ASK;
+                cmd.orderType       = (ioc == 1) ? OrderType.IOC : OrderType.GTC;
+                cmd.resultCode      = CommandResultCode.VALID_FOR_MATCHING_ENGINE;
+                cmd.matcherEvent    = null;
+                book.newOrder(cmd);
+                long filled = repTrades(cmd.matcherEvent, oid, seq);
+                if (ioc == 1 && filled < qty)
+                    rep(2 /*ME_CANCEL_ACK*/, side, seq, oid, price,
+                        (int) (qty - filled), 0, 0);
+            } else if (type == 1) {                   // CANCEL
+                cmd.command      = OrderCommandType.CANCEL_ORDER;
+                cmd.orderId      = oid; cmd.uid = UID;
+                cmd.resultCode   = CommandResultCode.VALID_FOR_MATCHING_ENGINE;
+                cmd.matcherEvent = null;
+                if (book.cancelOrder(cmd) != CommandResultCode.SUCCESS)
+                    rep(4 /*ME_CANCEL_REJECT*/, 0, seq, oid, 0, 0, 0, 0);
+                else
+                    rep(2 /*ME_CANCEL_ACK*/, cmd.action == OrderAction.BID ? 0 : 1,
+                        seq, oid, cmd.matcherEvent.price, 0, 0, 0);
+            } else {                                  // MODIFY = cancel + reinsert
+                final long nprice = inB.getLong(b + 24);
+                final int  nqty   = inB.getInt(b + 32);
+                final int  side   = inB.get(b + 36) & 0xff;
+                cmd.command      = OrderCommandType.CANCEL_ORDER;
+                cmd.orderId      = oid; cmd.uid = UID;
+                cmd.resultCode   = CommandResultCode.VALID_FOR_MATCHING_ENGINE;
+                cmd.matcherEvent = null;
+                if (book.cancelOrder(cmd) != CommandResultCode.SUCCESS) {
+                    rep(5 /*ME_MODIFY_REJECT*/, 0, seq, oid, 0, 0, 0, 0);
+                    continue;
+                }
+                cmd.command         = OrderCommandType.PLACE_ORDER;
+                cmd.orderId         = oid;    cmd.uid = UID;
+                cmd.price           = nprice; cmd.reserveBidPrice = nprice;
+                cmd.size            = nqty;
+                cmd.action          = (side == 0) ? OrderAction.BID : OrderAction.ASK;
+                cmd.orderType       = OrderType.GTC;
+                cmd.resultCode      = CommandResultCode.VALID_FOR_MATCHING_ENGINE;
+                cmd.matcherEvent    = null;
+                book.newOrder(cmd);
+                repTrades(cmd.matcherEvent, oid, seq);
+                rep(3 /*ME_MODIFY_ACK*/, side, seq, oid, nprice, nqty, 0, 0);
+            }
+        }
+        return ((long) i << 32) | (wc & 0xffffffffL);
+    }
+
     /** Best (highest) bid in ticks, or Long.MIN_VALUE if there are no bids. */
     public long bestBid() {
         L2MarketData d = book.getL2MarketDataSnapshot(1);

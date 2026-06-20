@@ -91,6 +91,15 @@ typedef struct {
     uint8_t  _reserved[3];
 } modify_t;
 
+// Batch element (api/matching_engine_api.h me_msg_t): tag at 0, the new/cancel/
+// modify payload at offset 8, mirrored as raw bytes for per-tag reinterpret.
+// Must stay 40 bytes.
+typedef struct {
+    uint8_t tag;
+    uint8_t _pad[7];
+    uint8_t payload[32];
+} me_msg_t;
+
 enum {
     ME_ORDER_ACK     = 0,
     ME_TRADE         = 1,
@@ -128,11 +137,21 @@ static inline int me_push(const me_transport_t* t, void* sink,
                           const me_report_t* r) {
     return t->push(sink, r);
 }
+
+// Bulk push: hand a whole report run across the cgo boundary in ONE Go->C
+// crossing; the per-report transport pushes then run as native C. The
+// ME_BULK_EMIT measurement path amortizes the OUTBOUND crossing this way.
+static inline void me_push_n(const me_transport_t* t, void* sink,
+                             const me_report_t* r, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++)
+        while (!t->push(sink, &r[i])) { }
+}
 */
 import "C"
 
 import (
 	"math"
+	"os"
 	"unsafe"
 )
 
@@ -208,13 +227,34 @@ const trader0 TraderID = 1
 // Report transport.
 // ---------------------------------------------------------------------------
 
+// gBulkEmit (ME_BULK_EMIT) routes reports through a Go-side buffer handed
+// across in one me_push_n() crossing per run — the outbound analogue of
+// engine_on_batch. gBuf holds COPIES (gRep is reused, snapshotted on append).
+var (
+	gBulkEmit bool
+	gBuf      []C.me_report_t
+)
+
 func emit(r *C.me_report_t) {
+	if gBulkEmit {
+		gBuf = append(gBuf, *r)
+		return
+	}
 	for {
 		if C.me_push(gTransport, gSink, r) == 1 {
 			return
 		}
 		// spin until the transport accepts the report
 	}
+}
+
+// flushReports hands the buffered run across the boundary in one crossing.
+func flushReports() {
+	if len(gBuf) == 0 {
+		return
+	}
+	C.me_push_n(gTransport, gSink, &gBuf[0], C.uint32_t(len(gBuf)))
+	gBuf = gBuf[:0]
 }
 
 // One package-level scratch report, reused for every emission. A pointer
@@ -367,6 +407,8 @@ func engine_init(seed C.uint64_t, transport *C.me_transport_t, report_sink unsaf
 	gSink = report_sink
 	gEngine = NewMatchingEngine()
 	gShadow = make(map[uint64]shadowEntry, 1<<21)
+	gBulkEmit = os.Getenv("ME_BULK_EMIT") != ""
+	gBuf = make([]C.me_report_t, 0, 1<<20)
 	gEngToHarness = make(map[uint64]uint64, 1<<21)
 }
 
@@ -379,8 +421,10 @@ func engine_shutdown() {
 
 //export engine_flush
 func engine_flush() {
-	// Synchronous matcher: engine_on_* has already pushed every report and
-	// drained the output ring before returning.
+	// Synchronous matcher: engine_on_* has already produced every report. Under
+	// ME_BULK_EMIT they sit in gBuf until handed across here (and at the end of
+	// each engine_on_batch run); otherwise they were pushed inline.
+	flushReports()
 }
 
 //export engine_on_new_order
@@ -531,6 +575,32 @@ func engine_on_modify(m *C.modify_t) {
 		remaining: residual,
 		alive:     residual > 0,
 	}
+}
+
+// engine_on_batch — OPTIONAL ABI: process a run of n tagged messages in one
+// C->Go crossing, amortizing the foreign-thread cgo entry cost over the run.
+// Each message is dispatched to the same per-message handler, in array order,
+// with no cross-message lookahead — identical semantics to one-at-a-time.
+//
+//export engine_on_batch
+func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
+	sz := unsafe.Sizeof(C.me_msg_t{})
+	base := uintptr(unsafe.Pointer(msgs))
+	for i := 0; i < int(n); i++ {
+		m := (*C.me_msg_t)(unsafe.Pointer(base + uintptr(i)*sz))
+		payload := unsafe.Pointer(&m.payload[0])
+		switch uint8(m.tag) {
+		case 0:
+			engine_on_new_order((*C.new_order_t)(payload))
+		case 1:
+			engine_on_cancel((*C.cancel_t)(payload))
+		case 2:
+			engine_on_modify((*C.modify_t)(payload))
+		}
+	}
+	// Outbound amortization (ME_BULK_EMIT): hand this run's reports across in one
+	// crossing. No-op when bulk emit is off (reports were pushed inline).
+	flushReports()
 }
 
 // ---------------------------------------------------------------------------

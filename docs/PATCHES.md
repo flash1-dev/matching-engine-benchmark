@@ -75,7 +75,10 @@ Upstream: <https://github.com/exchange-core/exchange-core>
 that `mvn package` produces. The adapter is a JNI bridge:
 `adapters/exchange_core_adapter.cpp` embeds a JVM and
 `adapters/HarnessExchangeCore.java` drives exchange-core's `OrderBookDirectImpl`.
-Both files are harness-owned glue; no exchange-core class is modified.
+The adapter also exports a Java-side `engine_on_batch` (one JNI crossing per run
+of messages, rather than one per message), so exchange-core is measured on its
+matcher rather than on the JNI boundary. Both files are harness-owned glue; no
+exchange-core class is modified.
 
 Adapter behaviour worth recording:
 

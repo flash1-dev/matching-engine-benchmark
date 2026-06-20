@@ -5,8 +5,10 @@
  * (Flash One Technologies, 2026).
  *
  * An engine under test is built as a shared library (.so) that exports the
- * symbols below. The harness loads it with dlopen() and drives it one message
- * at a time.
+ * symbols below. The harness loads it with dlopen() and, by default, drives it
+ * one message at a time; an engine that exports the optional engine_on_batch()
+ * (documented later in this header) is instead handed a run of messages per
+ * call.
  *
  * ----------------------------------------------------------------------------
  * Contract requirements
@@ -80,6 +82,18 @@ typedef struct {
     uint8_t  side;               /* 0 = buy, 1 = sell — the order's side    */
     uint8_t  _reserved[3];       /* pad to 32 bytes                         */
 } modify_t;
+
+/* A tagged workload message — one element of an engine_on_batch() array. The
+ * union payload begins at offset 8; `type` selects which arm is live. */
+typedef struct {
+    uint8_t type;                /* 0 = new_order_t, 1 = cancel_t, 2 = modify_t */
+    uint8_t _reserved[7];
+    union {
+        new_order_t no;
+        cancel_t    c;
+        modify_t    md;
+    };
+} me_msg_t;
 
 /* ===========================================================================
  * Report stream
@@ -180,6 +194,8 @@ void engine_shutdown(void);
  * transport. The calls return nothing: the engine is free to match and report
  * on whatever thread(s) it chooses, provided engine_flush() and the
  * engine_query_* calls observe the results (see the contract notes above).
+ * (An engine may instead receive a run of messages per call via the optional
+ * engine_on_batch() below.)
  * ===========================================================================*/
 
 /* Process a new order: match it, emit one OrderAck, one Trade per fill, and —
@@ -259,8 +275,38 @@ const me_transport_t* engine_get_transport(void);
 
 void engine_prebuild(uint8_t msg_type, const void* msg);
 
+/* ===========================================================================
+ * OPTIONAL: batch delivery
+ *
+ * If exported, the harness delivers the workload through engine_on_batch()
+ * instead of the per-message engine_on_* calls: each call hands the engine a
+ * run of `n` tagged messages to process. This exists for engines whose ABI
+ * boundary is expensive to cross per call (e.g. a foreign-runtime matcher
+ * reached through cgo/JNI, where each inbound call pays a runtime-entry cost);
+ * delivering a run amortizes that fixed per-crossing cost over `n` messages. An
+ * engine that does not export this is driven one message at a time as before.
+ *
+ * CONTRACT — process the run exactly as if each message had been delivered
+ * alone, in array order, with NO cross-message lookahead. Message i must be
+ * fully matched (and its reports pushed) before message i+1 is examined; the
+ * engine may not peek at a later message to alter how it handles an earlier one
+ * (e.g. net a new order against a cancel that appears later in the same batch).
+ * Two harness mechanisms enforce this without trusting the engine: the report
+ * stream must be byte-identical to per-message delivery (any lookahead changes
+ * the emitted reports and fails the canonical hash), and — so the random-point
+ * state audit keeps working — the harness ends a batch exactly at each audit
+ * probe index, then calls engine_query_* before delivering the next batch, so
+ * the book is inspected at the same unpredictable per-message points it would
+ * be under one-at-a-time delivery (see docs/ANTI_CHEAT.md). engine_flush() is
+ * still the final barrier.
+ * ===========================================================================*/
+
+void engine_on_batch(const me_msg_t* msgs, uint32_t n);
+
 #ifdef __cplusplus
 }  /* extern "C" */
+
+static_assert(sizeof(me_msg_t) == 40, "me_msg_t must be 40 bytes");
 
 static_assert(sizeof(new_order_t) == 32, "new_order_t must be 32 bytes");
 static_assert(sizeof(cancel_t)    == 16, "cancel_t must be 16 bytes");

@@ -38,6 +38,7 @@ struct EngineLib {
     uint64_t (*query_depth_at)(int64_t, uint8_t)            = nullptr;
     const me_transport_t* (*get_transport)(void)            = nullptr;  /* optional */
     void     (*prebuild)(uint8_t, const void*)              = nullptr;  /* optional */
+    void     (*on_batch)(const me_msg_t*, uint32_t)         = nullptr;  /* optional */
 };
 
 /* ---- transport.cpp : the harness's report transports --------------------*/

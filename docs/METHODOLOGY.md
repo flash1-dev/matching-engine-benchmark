@@ -273,6 +273,52 @@ id is both the fastest structure and the one a production gateway would use. An
 id outside the live range resolves to "not resting" (a CancelReject or
 ModifyReject), so the scheme never trades correctness for speed.
 
+## Batch delivery (ABI-crossing-taxed engines)
+
+By default the harness drives an engine **one message at a time** — one
+`engine_on_new_order` / `engine_on_cancel` / `engine_on_modify` call per workload
+message (`api/matching_engine_api.h`). For a native engine (C, C++, Rust) that
+call is a direct branch into the matcher and costs almost nothing. For an engine
+whose matcher sits behind a **language-runtime boundary**, it is not: every
+inbound call crosses that boundary, and for some runtimes the crossing dwarfs the
+matching work. A Go matcher reached through cgo pays the runtime-entry cost
+(`needm`) on every call — *tens of microseconds* when the calling thread is
+foreign to the Go runtime, because the runtime re-derives that thread's stack
+bounds from `/proc/self/maps` on each entry — and a Java matcher reached through
+JNI pays a method-call trampoline per message. Driven one at a time, such an
+engine's throughput measures its **ABI boundary, not its matcher**
+(`discoveries.md` quantifies each crossing).
+
+To measure those engines on their matchers, an engine MAY export the optional
+`engine_on_batch(msgs, n)` entry point. The harness then delivers the workload as
+runs of messages — one call per run — and the engine loops over the run
+internally, paying the boundary crossing **once per run instead of once per
+message**. The matching is unchanged: each message is processed in array order,
+exactly as if delivered alone, with no cross-message lookahead.
+
+**The audit still works.** The harness does not hand over one giant batch; it
+ends each batch exactly at the next random state-audit probe index, queries the
+book there, then continues — so the book is inspected at the same unpredictable
+per-message points as under one-at-a-time delivery. The full report-stream hash
+and the random-point state audit (`docs/ANTI_CHEAT.md`) are therefore byte-for-
+byte identical to per-message delivery, and a batched run is gated VALID on
+exactly the same basis. Two mechanisms keep an engine honest without trusting it:
+the report stream must reproduce the consensus hash (any cross-message lookahead
+or netting changes the emitted reports and fails it), and the book is probed at
+the same points it would be one message at a time.
+
+**Recommendation.** An engine whose runtime taxes each ABI crossing — **Go
+(cgo), Java (JNI)**, and any other managed or foreign runtime reached across the
+C ABI — should implement `engine_on_batch`; without it the harness measures the
+crossing, not the matcher, and the engine's figure understates it by the boundary
+cost (for cgo, by orders of magnitude). A native engine (C/C++/Rust) needs it
+only for a small gain: batched delivery also amortizes the harness's own
+per-message dispatch — one indirect call through the `dlopen`'d symbol, ~2 ns,
+which registers only for an engine fast enough for that to matter. The comparison
+tables in the README and `discoveries.md` therefore report the batched figure for
+the engines it moves materially; for every other engine the two coincide within
+measurement noise.
+
 ## Correctness
 
 Correctness is verified over the engine's **whole output stream** — every

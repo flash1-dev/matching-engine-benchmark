@@ -82,11 +82,14 @@ The upstream uses a `gil` package manager to fetch CppCommon; we sidestep
 Overrides: `ME_CPPTRADER_SRC` and `ME_CPPCOMMON_SRC` use existing
 checkouts in place of cloning.
 
-## Known engine issue (off the canonical path)
+## Engine issue (resolved upstream)
 
 On the canonical workload CppTrader is VALID on all five scenarios. During
 stress-testing with a deeper standing book we hit — and verified in a debug
-build — an engine-level defect worth knowing about: a modify that reprices
+build — an engine-level defect we reported as CppTrader
+[issue #42](https://github.com/chronoxor/CppTrader/issues/42) and which was
+fixed upstream in commit
+[`731ea64`](https://github.com/chronoxor/CppTrader/commit/731ea64674): a modify that reprices
 one tick, crosses, and fills *completely* can leave its order node in the
 engine's id index with a null price-level pointer; a later cancel of that id
 then dereferences it in `OrderBook::DeleteOrder` and crashes. An adapter
@@ -94,4 +97,4 @@ that hides the engine's id index behind its own liveness shadow masks the
 crash but trips CppCommon's pool leak assertion at teardown instead. The
 trigger is narrower than "any fully-filled crossing modify" (the canonical
 workload contains dozens and does not trip it); we did not pin the internal
-branch. Full mechanics and provenance in `discoveries.md`.
+branch. Full mechanics, provenance, and the upstream resolution are in `../../RESOLVED_FINDINGS.md`.
