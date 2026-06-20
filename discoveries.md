@@ -207,7 +207,7 @@ which is ill-formed under C++20; a `sed` in `build.sh` strips the `const`.
 The affected accessors are not called by the adapter, so the patch is
 semantically null.
 
-### jxm35/LimitOrderBook-MatchingEngine — three independent observations
+### jxm35/LimitOrderBook-MatchingEngine — a cancel-path double-unlink, plus a never-invoked trade hook
 
 **Trade hook never invoked.** `lib/MDFeed/include/publisher/MDAdapter.h:29`
 declares `notify_trade(trade_id, price, quantity, buyerAggressed)` on the
@@ -226,7 +226,8 @@ The exact count varies by probe seed (re-randomised per run) and by
 scenario; observed on this snapshot: roughly 88–185 of 192 across the five
 scenarios (lowest on `flash-crash`, highest on `static`). The engine's queries are internally
 consistent for jxm35 but do not agree with what an independent baseline
-computes from the same input stream. We have not pin-pointed root cause.
+computes from the same input stream. The root cause is the cancel-path
+double-unlink described below.
 
 **Missed crossings.** On every scenario the engine matches slightly less
 than the consensus: 62,088 trades vs 62,474 on `normal`, 776 vs 827 on
@@ -240,16 +241,46 @@ than the trade-count deficit alone suggests. During development we also ran
 a deeper-standing-book stress variant of the workload, where the same
 under-matching scaled dramatically (tens of percent of all crossings missed
 and throughput collapsing with resting-set size); the canonical workload
-exercises the defect only at the margin. We did not trace it to source.
+exercises the defect only at the margin.
+
+**Root cause — a cancel-path double-unlink.** The state-query divergence and
+the missed crossings both reduce to one defect. `OrderBook<>::RemoveOrder`
+(`lib/OrderBook/src/core/OrderBook.cpp:242-258`) unlinks a removed order
+twice: for a cancel/modify of any non-head order on a level holding two or
+more orders, it first hand-splices the intrusive list (`:242-254`, touching
+only `prev`/`next`), then calls `limit->RemoveOrder()` (`:256`), which
+re-walks the level from `head_` to do the real accounting
+(`lib/OrderBook/src/entries/OrderBookEntry.cpp:43-69`). The hand-splice has
+already removed the order from that walk, so it returns `"Order not found"`
+(`:47`) before the `size_--` / `orderQuantity_ -=` at `:68-69`. `Limit::size_`
+(→ `GetOrderCount`) and `orderQuantity_` (→ per-level quantity, best-bid/ask)
+are left permanently overstated, the emptied level is never erased (the
+`GetOrderCount()==1` erase at `:237` never fires) so it lingers as a ghost
+level, and the `head_`-chain becomes shorter than the level's true
+population — depth the matcher (which walks only from `head_`) cannot reach,
+so a later taker fills the lone reachable order and rests its residual. Only
+head cancels and single-order levels are correct (their branch leaves
+`->next` intact), so the bug fires only for `GetOrderCount()>1` and scales
+with book depth — `static`'s deep levels miss ≈6% of crossings vs `normal`'s
+thin book ≈0.6%. Reproduced byte-for-byte on `static`: the jxm35 report
+stream is exactly 51 lines (= 51 trades) shorter than the consensus, first
+diverging at a modify into a level the engine believes holds 6 orders / 312
+shares but whose head-chain is length 1. `AmendOrder` is unconditional
+cancel+reinsert (`:96-103`), so modifies inherit it; the injected trade-hook
+is not implicated (it lives only in `TryMatch`). The fix is to drop the
+redundant hand-splice and let `limit->RemoveOrder()` be the sole unlink. (A
+latent second defect: `OrderBookEntry::DecreaseQuantity` takes `uint16_t`
+while `TryMatch` passes a `uint32_t` fill — `OrderBookEntry.h:89` — truncating
+any single fill ≥ 65536; dormant at this workload's small quantities.)
 
 Taken together these put jxm35 at `Verdict: INVALID` under the harness's
 mechanical criterion — the state-audit probes mismatch the baseline on every
-scenario, and the report-stream hash fails on every scenario. We did not
-trace either to a specific mechanism, and the cause may lie in the engine,
-in the required trade-hook patch, or in a query-semantics difference rather
-than a book-state error. We therefore record jxm35 as an **untraced
-divergence** — neither the hard-invariant nor the price-time-priority class above —
-an observation rather than an attributed cause.
+scenario, and the report-stream hash fails on every scenario. The state-query
+divergence and the missed crossings are now attributed to the cancel-path
+double-unlink above — a book-state corruption reproduced byte-for-byte —
+while the never-invoked trade hook is a separate, independent defect. jxm35 is
+thus an **attributed book-state error**, not the untraced observation first
+recorded.
 
 ### PIYUSH-KUMAR1809/order-matching-engine — asymmetric cached-best staleness
 
