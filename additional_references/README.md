@@ -1,6 +1,6 @@
 # Additional references
 
-Eleven worked adapter examples that wrap third-party matching engines (six
+Twelve worked adapter examples that wrap third-party matching engines (seven
 C++, three Rust, two Go) behind `api/matching_engine_api.h`. Their purpose is
 to show how an engine with a very different shape from the harness ABI can
 be made to drive the harness — and, by extension, to make the observations
@@ -21,6 +21,7 @@ at a pinned commit and patches it where needed:
 | `robaho_adapter/`      | C++  | https://github.com/robaho/cpp_orderbook (+ `robaho/cpp_fixed`)  | `f42358145e40015f709f1caa04670f88c8b8be40` |
 | `cpptrader_adapter/`   | C++  | https://github.com/chronoxor/CppTrader                          | `831d10e2a6dd96ac7b063f1d418f6563cbf74c50` |
 | `tzadiko_adapter/`     | C++  | https://github.com/Tzadiko/Orderbook                            | `dd136dd219ead95796f0e396e9e1395542bf673f` |
+| `cpp_orderbook_adapter/`| C++  | https://github.com/geseq/cpp-orderbook                          | `b58d931b02928a83b4038fa2125edce14adbd90e` |
 | `orderbookrs_adapter/` | Rust | https://github.com/joaquinbejar/OrderBook-rs                    | `53b4d2b0a657f4260e316d3a8ac3f0df0fc068bf` |
 | `limitbook_adapter/`   | Rust | https://github.com/solarpx/limitbook                            | `943eadc181d1e35a26abaa5217eeb32bf3304267` |
 | `philipgreat_adapter/` | Rust | https://github.com/philipgreat/lighting-match-engine-core       | `381aeda4298524758db37d90c9a69f0fa5c8ca6c` |
