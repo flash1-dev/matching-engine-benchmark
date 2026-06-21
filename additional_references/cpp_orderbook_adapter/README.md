@@ -7,7 +7,7 @@ price/quantity type and [geseq/cpp-pool](https://github.com/geseq/cpp-pool)
 for its order-node allocator, plus Boost intrusive containers.
 
 Pinned commits:
-- `geseq/cpp-orderbook` — `b58d931b02928a83b4038fa2125edce14adbd90e`
+- `geseq/cpp-orderbook` — `81e5a29fc6f0f64b75f2e9534ee39ab5e66fe2aa`
 - `geseq/cpp-decimal`   — `88646b353a4ef191b4936bf765554c726dcaf9fb` (tag `v2.1.0`)
 - `geseq/cpp-pool`      — `730fe13f2c473b8ef4fe73c58dad048016c1fffd` (tag `v0.5.0`)
 
@@ -98,7 +98,7 @@ system Boost.
 cpp-orderbook had a price-cross defect — under certain crossing sequences the
 book could match across the spread incorrectly — which has since been fixed
 upstream. The pinned commit
-[`b58d931`](https://github.com/geseq/cpp-orderbook/commit/b58d931b02928a83b4038fa2125edce14adbd90e)
+[`81e5a29`](https://github.com/geseq/cpp-orderbook/commit/81e5a29fc6f0f64b75f2e9534ee39ab5e66fe2aa)
 is `main` HEAD and already contains the fix, so the pin needs no patch:
 `build.sh` clones and resets without a `sed` step. Full mechanics, provenance,
 and the upstream resolution are in `../../RESOLVED_FINDINGS.md`.

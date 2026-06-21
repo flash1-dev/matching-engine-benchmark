@@ -27,7 +27,7 @@ TP="$REPO/third_party"
 mkdir -p "$TP"
 
 CPP_ORDERBOOK_URL="https://github.com/geseq/cpp-orderbook.git"
-CPP_ORDERBOOK_REF="b58d931b02928a83b4038fa2125edce14adbd90e"
+CPP_ORDERBOOK_REF="81e5a29fc6f0f64b75f2e9534ee39ab5e66fe2aa"
 DECIMAL_URL="https://github.com/geseq/cpp-decimal.git"
 DECIMAL_REF="88646b353a4ef191b4936bf765554c726dcaf9fb"  # tag v2.1.0
 POOL_URL="https://github.com/geseq/cpp-pool.git"
