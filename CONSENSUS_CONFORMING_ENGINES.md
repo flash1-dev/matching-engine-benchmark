@@ -4,7 +4,7 @@ Companion to [`README.md`](README.md) (which shows the top 10 by worst-case thro
 
 These **55** high-confidence engines (for 33 of them, with our suggested fix) reach byte-for-byte identical consensus on both the report stream and the book state across 100 random workload seeds (**+1 billion order messages** on each engine), and each also passes the pre-run conformance gate. **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (the filed upstream issue; one-line finding in `CORRECTNESS_FINDINGS.md`, full mechanics in the issue).
 
-The **Worst-case M/s** column is each engine's lowest throughput across the five scenarios (weakest regime, seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`). The originally-shipped reference adapters were measured at median of 10 trials; the engines rescued from the wider audit were measured **in isolation on clean cores** at median of 3 (the contended low cores an earlier pass used had roughly halved them).
+The **Worst-case M/s** column is each engine's lowest throughput across the five scenarios (weakest regime, seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`). 
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
