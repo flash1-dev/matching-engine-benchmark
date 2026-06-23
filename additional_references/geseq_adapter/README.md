@@ -4,7 +4,7 @@ Wraps [geseq/orderbook](https://github.com/geseq/orderbook) behind
 `api/matching_engine_api.h`. geseq/orderbook is a pure-Go limit-order book
 with a callback-style `NotificationHandler` interface.
 
-Pinned commit: `ba3a635425eb910fdf018643ccac92fb4aca526a` (past the upstream fix
+Pinned commit: `88e80980c691bcb62be8bd59ef9b2c04706e7c51` (past the upstream fix
 for the price-cross defect we reported — see *Engine issue* below).
 
 This adapter is one of the worked examples in `additional_references/` —

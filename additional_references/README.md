@@ -28,7 +28,7 @@ the originally-shipped twelve:
 | `orderbookrs_adapter/` | Rust | https://github.com/joaquinbejar/OrderBook-rs                    | `53b4d2b0a657f4260e316d3a8ac3f0df0fc068bf` |
 | `limitbook_adapter/`   | Rust | https://github.com/solarpx/limitbook                            | `943eadc181d1e35a26abaa5217eeb32bf3304267` |
 | `philipgreat_adapter/` | Rust | https://github.com/philipgreat/lighting-match-engine-core       | `381aeda4298524758db37d90c9a69f0fa5c8ca6c` |
-| `geseq_adapter/`       | Go   | https://github.com/geseq/orderbook                              | `ba3a635425eb910fdf018643ccac92fb4aca526a` |
+| `geseq_adapter/`       | Go   | https://github.com/geseq/orderbook                              | `88e80980c691bcb62be8bd59ef9b2c04706e7c51` |
 | `femtogo_adapter/`     | Go   | https://github.com/ejyy/femto_go                                | `46667a95064bd028e8f0ec1bc6a2f776d86721e3` |
 
 The adapters are not maintained: if an upstream moves past its pinned commit

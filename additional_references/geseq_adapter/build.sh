@@ -14,7 +14,7 @@ mkdir -p "$TP"
 GESEQ_URL="https://github.com/geseq/orderbook.git"
 # Pinned past the upstream fix for geseq/orderbook#25 (the multi-level price-cross
 # defect we reported); this commit re-applies the predicate, so no patch is needed.
-GESEQ_REF="ba3a635425eb910fdf018643ccac92fb4aca526a"
+GESEQ_REF="88e80980c691bcb62be8bd59ef9b2c04706e7c51"
 
 # ---------------------------------------------------------------------------
 # Toolchain: install a Go SDK under third_party/ if one is not already on PATH.
