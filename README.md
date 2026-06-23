@@ -152,9 +152,9 @@ See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the
 
 ## Latency under burst load
 
-Throughput is the ceiling that an exchange internally measures; what *a trader actually experiences* when the market moves is **latency** — and latency is a property of *headroom*, not average speed. This table stress-tests the five highest-throughput conforming engines, each in **its own weakest scenario**, and measures end-to-end matcher latency as the offered load rises. Every engine is therefore measured at its *hardest* operating point, not on a shared workload, so the scenario is labelled per row.
+Throughput is the ceiling that an exchange internally measures; what *a trader actually experiences* when the market moves is **latency** — and latency is a property of *headroom*, not average speed. This table stress-tests the five highest-throughput conforming engines, each in **its own weakest scenario**, and measures end-to-end matcher latency as the offered load rises. Every engine is therefore measured at its *hardest* operating point, not on a shared workload.
 
-The 5–12 M msg/s offered loads are the documented microburst range: Deutsche Börse's T7 reports inbound gateway flow peaking in the **millions of messages a second**, of which only a few hundred thousand reach the matcher — so a burst piles up behind the matching stage, which is exactly what this measures.[^t7] All values are nanoseconds, P50 / P99.
+The 5–12 M msg/s offered loads are the documented microburst range: Deutsche Börse's T7 reports inbound gateway flow peaking in the **millions of messages a second**, which is exactly what this measures.[^t7] **All values are nanoseconds, P50 / P99.**
 
 | Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
 |:-------|:-----------------|:------|:------|:-------|
@@ -164,9 +164,9 @@ The 5–12 M msg/s offered loads are the documented microburst range: Deutsche B
 | Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
 | asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
 
-**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound, therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length. At 12 M/s, every reference engine has fallen *tens of milliseconds* behind, while FlashOne answers in **383 ns**: a 56,000–240,000× difference.
+**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
 
-> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine — FlashOne included — eventually diverges as ρ → 1. FlashOne's P50 holds sub-microsecond past the loads charted here (480 ns at 20 M/s), its latency knee sits at ≈ 28 M/s (near-edge P50 ≈ 2.2 µs), and it sustains ≈ 31 M/s.
+> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's P50 holds sub-microsecond past the loads charted here (480 ns at 20 M/s), its latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
 
 ## Non-conforming engines
 
