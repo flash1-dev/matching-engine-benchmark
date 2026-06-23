@@ -22,10 +22,10 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | fmstephe (474★) | Go | with fix | 2.48 (static) | — | crossing trades print at the maker price, not the midpoint |
 | coralme (56★) | Java     | as shipped       | 1.97 (flash-crash) | — | |
 | robaho | C++ | with fix | 1.90 (swing-25) | 10–22 M/s | execute at the resting (maker) price, not the aggressor's limit |
+| geseq         | Go       | as shipped       | 1.81 (swing-25) | 12.5–21M/s | a multi-level cross-through is fixed upstream — `RESOLVED_FINDINGS.md` |
 | gocronx (84★) | Rust     | as shipped       | 1.77 (static) | ~17M/s | |
 | apex | Rust | with fix | 1.62 (static) | — | execute at the maker price, not the aggressor's limit |
 | matchina | Rust | with fix | 1.60 (static) | — | taker-exhaustion guard — no phantom zero-quantity trades |
-| geseq         | Go       | as shipped       | 1.57 (static) | 12.5–21M/s | a multi-level cross-through is fixed upstream — `RESOLVED_FINDINGS.md` |
 | Exchange-core (2556★) | Java/JVM | as shipped        | 1.40 (flash-crash) | — | baseline; direct-access book, JNI per message |
 | jiang         | Java     | with fix | 1.30 (swing-25) | — | 1-line `idMaps.remove(id)` so modify doesn't drop the order |
 | limitbook | Rust | with fix | 1.16 (static) | ~30 M/s | partial-fill write-back — decrement the resting maker |

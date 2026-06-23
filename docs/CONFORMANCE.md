@@ -10,11 +10,9 @@ performance-measured.
 
 The canonical workload is a realistic, random order flow calibrated to a liquid
 equity. That realism is the point for *throughput* — but it means whole classes
-of correctness bug stay **latent**, because the random flow never constructs the
-exact shape that triggers them: it cancels live resting orders (never the middle
-of a multi-order price level), it rarely sweeps several levels in one marketable
-order, and it never sends a cancel or modify for an order that has already been
-fully executed. Several real defects we found live exactly there.
+of correctness bug could stay **latent**, because the random flow — based on a GBM
+price process — is limited in its ability to construct the exact shapes that trigger
+them. Several real defects we found live exactly there.
 
 Shoe-horning such a case into the timed workload would be wrong: it pollutes a
 realistic order flow with a synthetic bug-trap and distorts the throughput

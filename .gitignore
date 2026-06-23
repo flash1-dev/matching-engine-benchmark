@@ -5,6 +5,8 @@ build/
 *.o
 *.so
 *.a
+*.json
+*.jsonl
 target/
 
 # Compiled Java helper + generated classpaths (build_baselines.sh + Java adapter build.sh artifacts)
@@ -17,6 +19,7 @@ workload/cache/
 
 # Benchmark result files
 results/
+paper_benchmark_results/
 
 # Third-party engine sources fetched by build_baselines.sh or by the
 # additional_references/<name>_adapter/build.sh scripts.

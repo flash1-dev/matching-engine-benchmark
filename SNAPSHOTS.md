@@ -58,7 +58,7 @@ pinned third-party adapters and are omitted.
 | fmstephe       | fmstephe/matching_engine                                               | `fdc2088cfe508d78e2ec5fa6dfa2d8cb3a189873` | Go         |
 | coralme        | coralblocks/CoralME                                                    | `6d0f94898f05ca7059a79551132be16c17785863` | Java       |
 | gocronx        | gocronx/matcher                                                        | `b8d48356c8a2677e0d8a1965d754e3c4884bb947` | Rust       |
-| geseq          | geseq/orderbook                                                        | `ba3a635425eb910fdf018643ccac92fb4aca526a` | Go         |
+| geseq          | geseq/orderbook                                                        | `88e80980c691bcb62be8bd59ef9b2c04706e7c51` | Go         |
 | jiang          | JiangYongKang/FastMatchingEngine                                       | `8a3b597a042e402cd8bd5c95fc2d3b0884913022` | Java       |
 | m5487          | 0x5487/matching-engine                                                 | `e5d3129ce195da0e6045f7d6a00ef26972d46afd` | Go         |
 | jlob           | eliquinox/jLOB                                                         | `c78c2a2ce77c339b2343a1678f881fc9749fbd87` | Java/JNI   |

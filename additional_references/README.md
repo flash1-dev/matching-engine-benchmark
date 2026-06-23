@@ -13,27 +13,13 @@ correctness reference comes from the three engines under `scripts/build_baseline
 (Liquibook, QuantCup, Exchange-core), and is reproduced across the conforming field. The adapters here are
 point-in-time **snapshots** — each `build.sh` clones the engine's upstream
 at a pinned commit and patches it where needed. Every adapter's upstream repo
-and pinned commit is listed per engine in [`../SNAPSHOTS.md`](../SNAPSHOTS.md);
-the originally-shipped twelve:
-
-| Adapter                | Lang | Upstream                                                        | Pinned commit                              |
-|------------------------|------|-----------------------------------------------------------------|--------------------------------------------|
-| `piyush_adapter/`      | C++  | https://github.com/PIYUSH-KUMAR1809/order-matching-engine       | `033d7859186bdc7e265b76883da5515722f7f249` |
-| `mansoor_adapter/`     | C++  | https://github.com/mansoor-mamnoon/limit-order-book             | `78e1fb0e0563388456e5030d858ef43d6407bed3` |
-| `jxm35_adapter/`       | C++  | https://github.com/jxm35/LimitOrderBook-MatchingEngine          | `b5984aacb1f9a1816855df4942752711866dbfbf` |
-| `robaho_adapter/`      | C++  | https://github.com/robaho/cpp_orderbook (+ `robaho/cpp_fixed`)  | `f42358145e40015f709f1caa04670f88c8b8be40` |
-| `cpptrader_adapter/`   | C++  | https://github.com/chronoxor/CppTrader                          | `831d10e2a6dd96ac7b063f1d418f6563cbf74c50` |
-| `tzadiko_adapter/`     | C++  | https://github.com/Tzadiko/Orderbook                            | `dd136dd219ead95796f0e396e9e1395542bf673f` |
-| `cpp_orderbook_adapter/`| C++  | https://github.com/geseq/cpp-orderbook                          | `81e5a29fc6f0f64b75f2e9534ee39ab5e66fe2aa` |
-| `orderbookrs_adapter/` | Rust | https://github.com/joaquinbejar/OrderBook-rs                    | `53b4d2b0a657f4260e316d3a8ac3f0df0fc068bf` |
-| `limitbook_adapter/`   | Rust | https://github.com/solarpx/limitbook                            | `943eadc181d1e35a26abaa5217eeb32bf3304267` |
-| `philipgreat_adapter/` | Rust | https://github.com/philipgreat/lighting-match-engine-core       | `381aeda4298524758db37d90c9a69f0fa5c8ca6c` |
-| `geseq_adapter/`       | Go   | https://github.com/geseq/orderbook                              | `88e80980c691bcb62be8bd59ef9b2c04706e7c51` |
-| `femtogo_adapter/`     | Go   | https://github.com/ejyy/femto_go                                | `46667a95064bd028e8f0ec1bc6a2f776d86721e3` |
+and pinned commit is listed per engine in [`../SNAPSHOTS.md`](../SNAPSHOTS.md) —
+the single source of truth, one row per engine, kept in step with each adapter's
+`build.sh`.
 
 The adapters are not maintained: if an upstream moves past its pinned commit
 the adapter may not build against the newer source, and any observation in
-`CORRECTNESS_FINDINGS.md` describes the snapshot above and only the snapshot above. A
+`CORRECTNESS_FINDINGS.md` describes the pinned snapshot and only that snapshot. A
 project's current `main` may already differ.
 
 Each subfolder has a short README that documents the engine's native API

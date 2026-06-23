@@ -98,4 +98,4 @@ bash additional_references/geseq_adapter/build.sh
    root.
 
 Override the upstream checkout: `ME_GESEQ_SRC=/path/to/checkout` skips the
-clone. Point it at a commit that contains the upstream fix (`ba3a635` or later).
+clone. Point it at a commit that contains the upstream fix (`88e8098` or later).

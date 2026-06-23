@@ -115,7 +115,9 @@ iteration instead of only at the entry guard, so a marketable order stops at its
 own limit rather than consuming the next-best level. The maintainer also added a
 CI correctness gate that runs this benchmark against the engine
 ([`ba3a635`](https://github.com/geseq/orderbook/commit/ba3a635425eb)). The
-harness now pins the fixed commit (`ba3a635`), so geseq is VALID on all five
+harness pins a later upstream commit
+([`88e8098`](https://github.com/geseq/orderbook/commit/88e80980c691)) that
+carries the fix, so geseq is VALID on all five
 scenarios with no adapter patch; its published figure is unchanged, since the
 upstream fix is the same one-line predicate the adapter previously applied. The
 pre-fix snapshot it carried was `3b9e9cd`.
