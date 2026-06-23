@@ -1,0 +1,34 @@
+[package]
+name = "llc993_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols, calling
+# straight into llc-993/matching-core (the engine's own `matching-core` crate).
+[lib]
+name = "llc993_adapter"
+crate-type = ["cdylib"]
+# The adapter source is the single file at the adapter-dir root
+# (llc993_adapter.rs), kept beside build.sh / README.md (the robaho_adapter
+# "source at the adapter root" convention). It is the crate root directly — its
+# module-level `//!` docs require that — so `path` points up out of wrapper/.
+path = "../llc993_adapter.rs"
+
+[dependencies]
+# The engine crate (order book + matching + types + api). llc-993/matching-core
+# is a single package (its package name is `matching-core`, used in code as
+# `matching_core`), reached by path. Committed as the default third_party path;
+# build.sh rewrites it only when ME_LLC993_SRC overrides the checkout location.
+matching-core = { path = "../../../third_party/llc993_matching_core" }
+
+# Keep this crate OUT of any ancestor [workspace] so a `cargo build` here
+# compiles only the engine crate (+ its own deps), never anything else that
+# might sit above it in the tree.
+[workspace]
+
+# No [profile.release] overrides. House rule for Rust adapters: plain
+# `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
+# build.sh), and nothing more unless the ENGINE's own Cargo.toml prescribes it.
+# matching-core declares no [profile.release], so neither do we.

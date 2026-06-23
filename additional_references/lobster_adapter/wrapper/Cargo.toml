@@ -1,0 +1,36 @@
+[package]
+name = "lobster_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols, calling
+# straight into rubik/lobster's public OrderBook API. No C++ shim.
+[lib]
+name = "lobster_adapter"
+crate-type = ["cdylib"]
+# The adapter source is the single file at the adapter-dir root
+# (lobster_adapter.rs), kept beside build.sh / README.md (the robaho_adapter
+# "source at the adapter root" convention). It is the crate root directly — its
+# module-level `//!` docs require that — so `path` points up out of wrapper/.
+path = "../lobster_adapter.rs"
+
+[dependencies]
+# The lobster engine crate. Committed as the default third_party path; build.sh
+# rewrites it only when ME_LOBSTER_SRC overrides the checkout location. lobster
+# has no dependencies of its own (its Cargo.toml lists only dev-dependencies,
+# which a plain `cargo build` does not pull in), so this is the whole graph.
+lobster = { path = "../../../third_party/lobster" }
+
+# Keep this crate OUT of any enclosing [workspace] so a `cargo build` here
+# compiles only the wrapper + lobster, nothing the engine repo might add.
+[workspace]
+
+# No [profile.release] overrides. House rule for Rust adapters: plain
+# `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
+# build.sh), and nothing more unless the ENGINE's own Cargo.toml prescribes it.
+# lobster's OWN Cargo.toml declares a [profile.release] (opt-level 3, lto =
+# "thin", codegen-units = 1, panic = "abort"); because this wrapper depends on
+# lobster by path, cargo compiles lobster under its own release profile, so the
+# engine is built exactly as upstream ships it.

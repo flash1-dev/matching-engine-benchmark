@@ -129,7 +129,7 @@ Nasdaq OUCH 5.0 — that a direct index serves exactly.
 | Scenario | Annualised vol | Target swing | Character |
 |---|---:|---:|---|
 | `static` | 0.00 | 0% | Fixed mid; the deepest standing book. Isolates data-structure occupancy cost; trades sparsely (one-tick modify reprices meeting at the mid). |
-| `normal` | 0.15 | 2% | Routine intraday session. **Canonical** — the byte-identical three-baseline consensus is anchored on `normal` at the canonical seed (23). |
+| `normal` | 0.15 | 2% | Routine intraday session. **Canonical** — the byte-identical consensus is anchored on `normal` at the canonical seed (23). |
 | `swing-25` | 0.50 | 25% | High-volatility day. |
 | `swing-40` | 0.50 | 40% | Stressed market. |
 | `flash-crash` | 0.50 | 60% | Flash-crash dislocation, after documented intraday events such as the May 6, 2010 U.S. equity flash crash. |
@@ -223,9 +223,9 @@ how a production exchange treats a reprice or a size increase, and every modify
 in the canonical workload is one of those — specifically, every modify is a
 size **increase** (`new_quantity = old_quantity + 1`), and 80% of those are
 **also** a one-tick reprice on top. (A pure same-price quantity *decrease*
-keeps priority in production; the canonical workload contains none, so the
-three reference engines — one of which has no safe in-place modify — stay in
-exact agreement.) The engine implements `engine_on_modify` itself; it emits
+keeps priority in production; the canonical workload contains none, so
+every conforming engine stays in exact agreement — including one founding engine
+that has no safe in-place modify.) The engine implements `engine_on_modify` itself; it emits
 one Trade per crossing fill and one ModifyAck — or, for a modify of an order
 that is not resting, one ModifyReject.
 
@@ -248,7 +248,7 @@ compares the probes — the measured runs are never slowed by the check.
 Across the five scenarios, `run_challenge.py` reports each engine's
 **worst-case** throughput — the lowest of its five scenario medians, and the
 scenario that produces it — as the engine's definitional result. This is the
-basis for the comparison tables in the README and `discoveries.md`: an engine is
+basis for the comparison tables in the README: an engine is
 rated by the regime it handles worst, not its best, because the matcher must
 absorb the burst in whatever regime the market happens to be in.
 
@@ -286,8 +286,7 @@ matching work. A Go matcher reached through cgo pays the runtime-entry cost
 foreign to the Go runtime, because the runtime re-derives that thread's stack
 bounds from `/proc/self/maps` on each entry — and a Java matcher reached through
 JNI pays a method-call trampoline per message. Driven one at a time, such an
-engine's throughput measures its **ABI boundary, not its matcher**
-(`discoveries.md` quantifies each crossing).
+engine's throughput measures its **ABI boundary, not its matcher**.
 
 To measure those engines on their matchers, an engine MAY export the optional
 `engine_on_batch(msgs, n)` entry point. The harness then delivers the workload as
@@ -315,7 +314,7 @@ cost (for cgo, by orders of magnitude). A native engine (C/C++/Rust) needs it
 only for a small gain: batched delivery also amortizes the harness's own
 per-message dispatch — one indirect call through the `dlopen`'d symbol, ~2 ns,
 which registers only for an engine fast enough for that to matter. The comparison
-tables in the README and `discoveries.md` therefore report the batched figure for
+tables in the README therefore report the batched figure for
 the engines it moves materially; for every other engine the two coincide within
 measurement noise.
 
@@ -353,13 +352,16 @@ message in match order. CancelAck omits quantity (an IOC residual is implied by
 the trades and the OrderAck), and a reject carries only identity, since the
 cancelled / modified order is gone.
 
-The published hash is the **byte-identical consensus of three independent
-public engines** — Liquibook [liquibook], QuantCup [quantcupPTME], and
-Exchange-core [exchangecore]. On `normal` at seed 23 all three agree on the
-entire report stream — 62,474 trades among ~2.2M reports. Three unrelated
+The published hash is the **byte-identical consensus** — the report stream
+every conforming engine reproduces. It was first established from three
+independent public engines (Liquibook [liquibook], QuantCup [quantcupPTME], and
+Exchange-core [exchangecore]): on `normal` at seed 23 all three agree on the
+entire stream — 62,474 trades among ~2.2M reports — and the wider conforming
+field has since reproduced it byte-for-byte across 100 seeds. Unrelated
 codebases agreeing makes the reference credible and free of any single engine's
-bias. See `docs/PATCHES.md` for how each baseline is built — each has been
-corrected for documented defects and trade-price-convention mismatches.
+bias. See `docs/PATCHES.md` for how each baseline is built — QuantCup carries a source
+patch (a trade-price-convention fix, plus build-enabling and price-domain changes);
+Liquibook and Exchange-core are built from unmodified source.
 
 ## References
 

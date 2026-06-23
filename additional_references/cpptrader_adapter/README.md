@@ -10,7 +10,7 @@ Pinned commits:
 - `chronoxor/CppCommon`  — `e14011974b8d463cc854239bf351275b5a857de6`
 
 This adapter is one of the worked examples in `additional_references/` —
-none are baselines and none are maintained. See `discoveries.md` at the
+none are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the
 repository root for the observations the harness produced against this
 snapshot.
 

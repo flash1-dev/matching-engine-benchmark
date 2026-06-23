@@ -187,7 +187,7 @@ user's engine *before* writing the adapter:
   §4.6.
 
 When in doubt, find the closest match in `additional_references/` and read
-its adapter end-to-end before writing yours; the eleven examples cover most
+its adapter end-to-end before writing yours; the forty examples cover most
 real-world combinations of the points above.
 
 ---
@@ -356,7 +356,8 @@ void engine_on_modify(const modify_t* m) {
         r.price_ticks = m->new_price_ticks; r.quantity = m->new_quantity;
         push_report(r);
     } else {
-        // Not resting — the canonical workload injects ~2% stale modifies.
+        // Not resting — already filled, cancelled, or never seen (the canonical
+        // workload includes occasional stale modifies).
         me_report_t r{};
         r.type = ME_MODIFY_REJECT; r.sequence_number = m->sequence_number;
         r.order_id = m->order_id;
@@ -393,10 +394,11 @@ Pick the closest and read it — they are complete, working adapters:
   small shadow map for the audit queries.
 - `adapters/exchange_core_adapter.cpp` + `adapters/HarnessExchangeCore.java` —
   a **JVM** engine reached over JNI (see §4.4).
-- `additional_references/` — eleven more worked adapter examples (six C++, three
-  Rust, two Go) wrapping third-party matching engines. Each subdirectory has
+- `additional_references/` — forty worked adapter examples (twelve C++, ten Rust,
+  eight Go, five Java, three Python, one TypeScript, one C) wrapping third-party
+  matching engines. Each subdirectory has
   its own README; see `additional_references/README.md` for the index and
-  `discoveries.md` for the correctness/throughput observations the harness
+  `CORRECTNESS_FINDINGS.md` for the correctness observations the harness
   produced against them.
 
 ### 4.2 If the engine returns a fill list instead of using a callback
@@ -560,11 +562,12 @@ Notes:
 ```
 
 `reference/correctness_hash.txt` ships a published hash for every scenario at
-the canonical seed 23; `normal` is the canonical three-baseline consensus, so validate
+the canonical seed 23; `normal` is the canonical byte-identical consensus, so validate
 against `normal` first. A `perf` run measures throughput; an `audit` run runs
 the anti-cheat state audit. `scripts/run_challenge.py` drives the full
-protocol — 10 perf runs + 1 audit run per scenario — and prints the median
-throughput and the overall verdict.
+protocol — 10 perf runs + 1 audit run per scenario — and prints the per-scenario
+median throughput, the overall verdict, and (over all five scenarios, the default)
+the worst-case throughput as the definitional result.
 
 ---
 

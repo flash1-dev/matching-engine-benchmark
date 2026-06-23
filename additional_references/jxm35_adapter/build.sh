@@ -1,9 +1,41 @@
 #!/usr/bin/env bash
 # Build jxm35_adapter.so. Clones jxm35/LimitOrderBook-MatchingEngine at a
-# pinned commit, patches OrderBook.cpp to expose maker/taker ids via a single
-# adapter-side hook (the engine declares notify_trade but never calls it from
-# TryMatch), and compiles the result + this adapter into a single .so at the
-# harness repo root.
+# pinned commit, applies the source patches documented below, and compiles the
+# result + this adapter into a single .so at the harness repo root.
+#
+# Patches (all applied AFTER `git reset --hard` to the pin, so the reset can
+# never clobber them; each is idempotent and fails loud if its anchor is gone):
+#
+#  P0  Maker/taker-id hook. OrderBook<>::TryMatch is the only fill site and it
+#      never exposes which two orders traded, so the adapter injects one
+#      extern "C" __jxm35_adapter_trade_hook(...) call there to capture the
+#      maker/taker ids per fill (the engine declares MDAdapter::notify_trade
+#      but never calls it). Pre-existing; this is what the adapter drains into
+#      Trade reports.
+#
+#  P1  CORRECTNESS — emit trade events (upstream issue
+#      https://github.com/jxm35/LimitOrderBook-MatchingEngine/issues/1).
+#      TryMatch fills the book and bumps matchedQuantity_ but never calls
+#      notify_trade, so the market-data feed sees price-level updates but no
+#      executions. OrderBook has no trade-id counter, so add `nextTradeId_` and
+#      call md_adapter_.notify_trade(...) at the fill site next to the existing
+#      level-change call. (Functionally the adapter reads trades via P0's hook
+#      and uses the Null publisher, but this restores the engine's own feed so
+#      the shipped benchmark engine is the FIXED engine.)
+#
+#  P2  CORRECTNESS — double-unlink in RemoveOrder (upstream issue
+#      https://github.com/jxm35/LimitOrderBook-MatchingEngine/issues/2, the
+#      decisive fix). Cancelling/modifying a
+#      non-head order on a level of >=2 orders unlinks the node TWICE: a
+#      hand-splice touches only prev/next (skipping the owning Limit's
+#      counters) and then limit->RemoveOrder() re-walks from head_ to do the
+#      real size_/orderQuantity_ accounting — but the hand-splice already
+#      pulled the target out of that chain, so the walk bails ("Order not
+#      found") and size_/orderQuantity_ are never decremented. The level then
+#      overstates depth and hides makers from TryMatch (51 fewer trades than
+#      the consensus on a deep book; AmendOrder is cancel+reinsert so modify
+#      inherits it). Fix: drop the hand-splice and let limit->RemoveOrder() be
+#      the sole unlink (the head path already relies on it).
 #
 # Override the upstream checkout: ME_JXM35_SRC=/path/to/existing/clone.
 set -euo pipefail
@@ -26,10 +58,11 @@ else
     git -C "$SRC" reset --hard --quiet "$JXM35_REF"
 fi
 
-# Patch OrderBook.cpp in place: inject one extern "C" hook call inside
+# P0: Patch OrderBook.cpp in place: inject one extern "C" hook call inside
 # TryMatch right after the matched-quantity bookkeeping line. Idempotent —
 # reset --hard above restores the file before re-patching.
 OBPATH="$SRC/lib/OrderBook/src/core/OrderBook.cpp"
+OBHPATH="$SRC/lib/OrderBook/include/core/OrderBook.h"
 python3 - "$OBPATH" <<'PY'
 import re, sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -54,6 +87,93 @@ inject = (
 assert src.count(needle) == 1, "patch needle not unique"
 src = src.replace(needle, inject)
 p.write_text(src)
+PY
+
+# P1: CORRECTNESS — emit trade events (upstream issue
+# https://github.com/jxm35/LimitOrderBook-MatchingEngine/issues/1).
+# (a) Add a trade-id counter to the OrderBook class private section, next to
+#     matchedQuantity_. (b) Call md_adapter_.notify_trade(...) at the fill site
+#     in TryMatch, right after the existing notify_price_level_change call, so
+#     the engine's own market-data feed now publishes executions (price, qty,
+#     aggressor side) instead of silently swallowing every fill. Idempotent
+#     (marker guards); fails loud if either anchor is gone.
+python3 - "$OBHPATH" "$OBPATH" <<'PY'
+import sys, pathlib
+hpath, cpath = sys.argv[1], sys.argv[2]
+
+# (a) trade-id counter in OrderBook.h
+h = pathlib.Path(hpath)
+hsrc = h.read_text()
+if "nextTradeId_" not in hsrc:
+    member = "    long matchedQuantity_;"
+    assert hsrc.count(member) == 1, "P1 header anchor not unique"
+    hsrc = hsrc.replace(
+        member,
+        member + "\n"
+        "    // jxm35_adapter P1 (upstream issue jxm35/LimitOrderBook-MatchingEngine#1):\n"
+        "    // trade-id source for the notify_trade emission the engine was missing.\n"
+        "    uint64_t nextTradeId_ = 1;")
+    h.write_text(hsrc)
+
+# (b) notify_trade call at the fill site in OrderBook.cpp
+c = pathlib.Path(cpath)
+csrc = c.read_text()
+if "nextTradeId_++" not in csrc:
+    needle = ("md_adapter_.notify_price_level_change(opposingPrice, "
+              "restingQty - matchedQty, restingQty,\n"
+              "                !isBuy); // TODO: This should happen within the limit")
+    assert csrc.count(needle) == 1, "P1 fill-site anchor not unique"
+    inject = (needle + "\n"
+              "            // jxm35_adapter P1 (upstream issue jxm35/LimitOrderBook-MatchingEngine#1):\n"
+              "            // emit the trade the engine never published. buyerAggressed ==\n"
+              "            // isBuy (the incoming order is the aggressor).\n"
+              "            md_adapter_.notify_trade(nextTradeId_++, "
+              "static_cast<uint64_t>(opposingPrice), "
+              "static_cast<uint64_t>(matchedQty), isBuy);")
+    csrc = csrc.replace(needle, inject)
+    c.write_text(csrc)
+PY
+
+# P2: CORRECTNESS — double-unlink in RemoveOrder (upstream issue
+# https://github.com/jxm35/LimitOrderBook-MatchingEngine/issues/2, the decisive
+# fix). Drop the hand-splice block in
+# OrderBook<>::RemoveOrder so limit->RemoveOrder() is the SOLE unlink and the
+# size_/orderQuantity_ accounting is no longer skipped for non-head
+# cancels/modifies. Idempotent (marker guard); fails loud if the block is gone.
+python3 - "$OBPATH" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+marker = "jxm35_adapter P2 (upstream issue jxm35/LimitOrderBook-MatchingEngine#2)"
+if marker not in src:
+    block = (
+        "    auto prev = obe->previous.lock();\n"
+        "    auto next = obe->next;\n"
+        "\n"
+        "    if (prev && next) {\n"
+        "        next->previous = obe->previous;\n"
+        "        prev->next = next;\n"
+        "    }\n"
+        "    else if (prev) {\n"
+        "        prev->next = nullptr;\n"
+        "    }\n"
+        "    else if (next) {\n"
+        "        next->previous.reset();\n"
+        "    }\n"
+        "\n"
+        "    limit->RemoveOrder(")
+    repl = (
+        "    // jxm35_adapter P2 (upstream issue jxm35/LimitOrderBook-MatchingEngine#2):\n"
+        "    // the hand-splice that used to live here unlinked the node a SECOND time,\n"
+        "    // touching only prev/next and skipping the owning Limit's counters,\n"
+        "    // so limit->RemoveOrder()'s re-walk from head_ never reached the\n"
+        "    // target for non-head cancels/modifies and size_/orderQuantity_ were\n"
+        "    // never decremented. Dropped — limit->RemoveOrder() is now the sole\n"
+        "    // unlink (the head path already relied on it).\n"
+        "    limit->RemoveOrder(")
+    assert src.count(block) == 1, "P2 hand-splice block anchor not unique"
+    src = src.replace(block, repl)
+    p.write_text(src)
 PY
 
 cd "$DIR"

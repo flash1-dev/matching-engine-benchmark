@@ -12,7 +12,7 @@ measure a single scenario instead.
 
 Examples:
   scripts/run_challenge.py --baseline liquibook                # all 5 + worst case
-  scripts/run_challenge.py --engine ./cpptrader_adapter.so     # any additional_references/ adapter
+  scripts/run_challenge.py --engine ./cpptrader_adapter.so     # a third-party adapter .so (built from additional_references/)
   scripts/run_challenge.py --engine ./my_engine.so --scenario flash-crash  # one scenario
   scripts/run_challenge.py --compare liquibook quantcup exchange_core       # worst-case ranking
 

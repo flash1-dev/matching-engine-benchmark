@@ -7,7 +7,7 @@ Pinned commit: `381aeda4298524758db37d90c9a69f0fa5c8ca6c`.
 License: MIT (`LICENSE.md`, "Copyright (c) 2025 PhilipGreat").
 
 This adapter is one of the worked examples in `additional_references/` — none
-are baselines and none are maintained. See `discoveries.md` at the repository
+are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the repository
 root for the observations the harness produced against this snapshot.
 
 ## Advertised vs measured
@@ -178,7 +178,7 @@ bash additional_references/philipgreat_adapter/build.sh
 `build.sh` installs the stable Rust toolchain into `$HOME/.cargo` if `cargo` is
 not on PATH (no sudo), clones the engine into
 `third_party/lighting-match-engine-core/` at the pinned commit, `git reset
---hard`s it, applies the `src/lib.rs` shim and the two source patches above, and
+--hard`s it, applies the `src/lib.rs` shim and the three source patches above, and
 builds the wrapper `cdylib` with `cargo build --release` and
 `RUSTFLAGS="-C target-cpu=native"` (nothing more — the upstream ships no
 effective `[profile.release]`, so per the house rule the adapter adds none).

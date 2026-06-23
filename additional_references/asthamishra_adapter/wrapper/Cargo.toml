@@ -1,0 +1,35 @@
+[package]
+name = "asthamishra_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols, calling
+# straight into AsthaMishra/matching-engine's matching-core crate.
+[lib]
+name = "asthamishra_adapter"
+crate-type = ["cdylib"]
+# The adapter source is the single file at the adapter-dir root
+# (asthamishra_adapter.rs), kept beside build.sh / README.md (the robaho_adapter
+# "source at the adapter root" convention). It is the crate root directly — its
+# module-level `//!` docs require that — so `path` points up out of wrapper/.
+path = "../asthamishra_adapter.rs"
+
+[dependencies]
+# The engine's pure matching core (order book + matching + types). Only this
+# leaf crate is needed; the workspace's gateway/server crates (tokio,
+# crossbeam, axum) are NOT pulled in. matching-core depends only on serde.
+# Committed as the default third_party path; build.sh rewrites it only when
+# ME_ASTHAMISHRA_SRC overrides the checkout location.
+matching-core = { path = "../../../third_party/asthamishra-matching-engine/matching-core" }
+
+# Keep this crate OUT of the engine's [workspace] so a `cargo build` here
+# compiles only matching-core (+ serde), not the whole multi-crate workspace
+# (server/ouch-gateway/rest-gateway pull in tokio/axum/crossbeam).
+[workspace]
+
+# No [profile.release] overrides. House rule for Rust adapters: plain
+# `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
+# build.sh), and nothing more unless the ENGINE's own Cargo.toml prescribes it.
+# matching-core declares no [profile.release], so neither do we.

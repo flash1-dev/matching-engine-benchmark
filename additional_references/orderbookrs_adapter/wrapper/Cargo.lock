@@ -462,8 +462,6 @@ dependencies = [
 [[package]]
 name = "pricelevel"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d83bd5a1c79812c8b5acd1566ed0b0fe4d69b75fb97df1f2c21cbf9b2e7d179"
 dependencies = [
  "crossbeam",
  "dashmap",

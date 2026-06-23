@@ -12,7 +12,7 @@ Pinned commits:
 - `geseq/cpp-pool`      — `730fe13f2c473b8ef4fe73c58dad048016c1fffd` (tag `v0.5.0`)
 
 This adapter is one of the worked examples in `additional_references/` —
-none are baselines and none are maintained. See `discoveries.md` at the
+none are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the
 repository root for the observations the harness produced against this
 snapshot.
 

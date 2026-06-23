@@ -1,0 +1,119 @@
+# pricelevel-pricetime.patch
+#
+# Price-time-priority fix for the `pricelevel` crate (pricelevel = "0.7",
+# pinned at 0.7.0), the dependency that OrderBook-rs (joaquinbejar/OrderBook-rs)
+# does its actual per-level matching in. Applied by build.sh with `git apply
+# -p1` to a freshly-extracted, pristine pricelevel-0.7.0 source tree (vendored
+# build-locally under wrapper/pricelevel-patched/, git-ignored), so the patched
+# crate replaces the crates.io copy via the wrapper's [patch.crates-io].
+#
+# Bug (filed upstream as https://github.com/joaquinbejar/OrderBook-rs/issues/88;
+# see CORRECTNESS_FINDINGS.md): in PriceLevel::match_order a partially
+# filled head order has its residual re-queued with `self.orders.push(...)`,
+# which sends it to the TAIL of the level's FIFO. Any same-price order that
+# arrived after the original maker is then matched ahead of the maker's
+# remainder on the next trade at that price — a price-time-priority violation.
+# Total resting quantity at the level is unchanged; only the maker_order_id of
+# subsequent same-price fills is wrong, which fails the benchmark report-stream
+# hash on all five scenarios.
+#
+# Fix (engine-source, not an adapter workaround): give OrderQueue a deque-like
+# backing (Mutex<VecDeque<Id>> instead of the tail-only SegQueue<Id>) and add a
+# push_front primitive, then re-queue the partial-fill residual at the FRONT
+# (level.rs match_order partial-fill arm) so the head keeps its time priority.
+# The unrelated tail push at level.rs update_order (explicit modify) is left as
+# push — modify-to-back is correct. pricelevel's own 144 price_level unit tests
+# pass unchanged.
+#
+# Reference: https://github.com/flash1-dev/matching-engine-benchmark
+--- a/src/price_level/order_queue.rs
++++ b/src/price_level/order_queue.rs
+@@ -1,23 +1,27 @@
+ use crate::errors::PriceLevelError;
+ use crate::orders::{Id, OrderType};
+-use crossbeam::queue::SegQueue;
+ use dashmap::DashMap;
+ use serde::de::{SeqAccess, Visitor};
+ use serde::ser::SerializeSeq;
+ use serde::{Deserialize, Deserializer, Serialize, Serializer};
++use std::collections::VecDeque;
+ use std::fmt;
+ use std::fmt::Display;
+ use std::marker::PhantomData;
+ use std::str::FromStr;
+-use std::sync::Arc;
++use std::sync::{Arc, Mutex};
+
+ /// A thread-safe queue of orders with specialized operations
+ #[derive(Debug)]
+ pub struct OrderQueue {
+     /// A map of order IDs to orders for quick lookups
+     orders: DashMap<Id, Arc<OrderType<()>>>,
+-    /// A queue of order IDs to maintain FIFO order
+-    order_ids: SegQueue<Id>,
++    /// A double-ended queue of order IDs to maintain FIFO (price-time) order.
++    /// A deque (not the previous tail-only `SegQueue`) is required so that a
++    /// partially-filled head order can be returned to the *front* of the queue
++    /// via `push_front`, preserving its original time priority across partial
++    /// fills instead of being demoted behind later same-price arrivals.
++    order_ids: Mutex<VecDeque<Id>>,
+ }
+
+ impl OrderQueue {
+@@ -26,7 +30,7 @@
+     pub fn new() -> Self {
+         Self {
+             orders: DashMap::new(),
+-            order_ids: SegQueue::new(),
++            order_ids: Mutex::new(VecDeque::new()),
+         }
+     }
+
+@@ -34,16 +38,27 @@
+     pub fn push(&self, order: Arc<OrderType<()>>) {
+         let order_id = order.id();
+         self.orders.insert(order_id, order);
+-        self.order_ids.push(order_id);
++        self.order_ids.lock().unwrap().push_back(order_id);
++    }
++
++    /// Return an order to the *front* of the queue, preserving its time
++    /// priority. Used for the residual of a partially-filled head order so the
++    /// next match continues consuming it before any later same-price arrival.
++    pub fn push_front(&self, order: Arc<OrderType<()>>) {
++        let order_id = order.id();
++        self.orders.insert(order_id, order);
++        self.order_ids.lock().unwrap().push_front(order_id);
+     }
+
+     /// Attempt to pop an order from the queue
+     #[must_use]
+     pub fn pop(&self) -> Option<Arc<OrderType<()>>> {
+         loop {
+-            if let Some(order_id) = self.order_ids.pop() {
+-                // If the order was removed, pop will return None, but the ID was in the queue.
+-                // In this case, we loop and try to get the next one.
++            let next_id = self.order_ids.lock().unwrap().pop_front();
++            if let Some(order_id) = next_id {
++                // If the order was removed, the map lookup will return None, but
++                // the ID was in the queue. In this case, we loop and try to get
++                // the next one.
+                 if let Some((_, order)) = self.orders.remove(&order_id) {
+                     return Some(order);
+                 }
+--- a/src/price_level/level.rs
++++ b/src/price_level/level.rs
+@@ -239,7 +239,12 @@
+                             .fetch_add(hidden_reduced, Ordering::AcqRel);
+                     }
+
+-                    self.orders.push(Arc::new(updated));
++                    // Re-queue the residual at the FRONT to keep the maker's
++                    // original time priority. The previous `push` sent it to
++                    // the tail, demoting it behind later same-price arrivals and
++                    // violating price-time priority on the next match at this
++                    // level.
++                    self.orders.push_front(Arc::new(updated));
+                 } else {
+                     self.order_count.fetch_sub(1, Ordering::AcqRel);
+                     match &*order_arc {

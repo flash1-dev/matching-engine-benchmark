@@ -8,7 +8,7 @@ Apache-2.0; depends on `rust_decimal` (declared `1.37.2`) and `eyre 0.6.x`
 from crates.io).
 
 This adapter is one of the worked examples in `additional_references/` — none
-are baselines and none are maintained. See `discoveries.md` at the repository
+are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the repository
 root for the observations the harness produced against this snapshot.
 
 ## Engine shape
@@ -89,10 +89,52 @@ engine's "price must be positive" guard is never tripped.)
 
 ## Source patch
 
-**None.** The upstream builds and runs as-published at the pinned SHA; the
-adapter is a pure wrapper. (See the verdict below — the divergence the harness
-reports is an upstream matching bug that the adapter deliberately does **not**
-paper over, so the measurement reflects the engine as shipped.)
+`build.sh` applies the engine's **with-fix correctness patch** (this is the
+"with fix" measurement), after `git reset --hard` to the pin so the reset can
+never clobber it (idempotent; fails loud if its anchors drift). Two source
+edits to the engine, plus one build-config edit gated on an override:
+
+- **Partial-fill write-back** (correctness fix, `src/order_book.rs`, **three
+  sites**). As shipped, a resting order that takes a *partial* fill is never
+  shrunk: `resting_order` is a `front_mut()` `&mut Order` whose `quantity` is
+  read to compute the fill and used to decrement the taker's remaining, the
+  level's `total_volume` and the book counter, but **never written back to the
+  maker itself**. The removal test `if fill_quantity == resting_order.quantity`
+  therefore stays false on a partial fill, so the maker sits at the queue front
+  at its *original* size and is matchable again and again — the book hands out
+  more shares than ever rested (~4.3× over-match on `normal`; full symptom table
+  below). The pristine `pop_front` removal block appears identically at all
+  three matching sites — the buy-side and sell-side loops in `add_limit_order`
+  (nested one level deeper) and the loop in `execute_market_order` — so the
+  patch adds an `else` branch (`resting_order.quantity -= fill_quantity;`) at
+  each, popping only on full consumption and decrementing the maker's own
+  quantity on a partial fill. This is the engine's real defect, filed upstream
+  as [solarpx/limitbook#1](https://github.com/solarpx/limitbook/issues/1); with
+  it the report stream is byte-identical to the consensus and limitbook is
+  **VALID ×5** (see the verdict below). `resting_order` is already `&mut Order`
+  and `Order::quantity` is a public `Decimal`, so each site is the one added
+  `else` branch and nothing else in the matching logic changes.
+- **Doc-comment relaxed** (cosmetic follow-on, `src/order.rs`). The fix above
+  mutates `Order::quantity` as a resting order fills, so the engine's
+  "All fields are immutable after creation" doc line is no longer true; the
+  patch rewrites it to say `id`/`order_type`/`order_side` are fixed at creation
+  while `quantity` is reduced as the order fills. A doc comment only — no
+  behaviour change — but kept accurate because the correctness patch makes the
+  original statement false.
+- **Cargo.toml dep path** (build-config, `wrapper/Cargo.toml`, **conditional**).
+  The wrapper crate depends on `../../../third_party/limitbook` by relative
+  path. *Only when* `ME_LIMITBOOK_SRC` overrides the default checkout does
+  `build.sh` `sed` that path to the override and restore it on exit (a `trap`);
+  in the default build this edit does not run. Pure build-config, no engine
+  semantics — listed for completeness so this section matches `build.sh` exactly.
+
+The first two edits are idempotent: the `git reset --hard` restores pristine
+sources each rerun, the `order_book.rs` patch is guarded by a `PATCH(...)`
+marker (re-apply is a no-op) and fails loud if its three anchor blocks are not
+found, and the `order.rs` edit is an exact-string no-op on rerun. Unlike the
+`kautenja_adapter` patch (pure adapter instrumentation, *not* that engine's
+correctness fix), the `order_book.rs` patch here **is** the upstream-filed
+correctness fix — see the verdict below for the bug it resolves.
 
 ## Build / run
 
@@ -108,7 +150,7 @@ bash additional_references/limitbook_adapter/build.sh
 is not on PATH (no sudo), clones the engine into `third_party/limitbook/` and
 hard-resets it to the pinned commit (idempotent), and builds the wrapper
 `cdylib` with `cargo build --release` + `RUSTFLAGS="-C target-cpu=native"`
-(the house build recipe — no PGO/LTO/codegen-units tuning; limitbook's own
+(the house build recipe — no extra optimization tuning beyond `target-cpu=native`; limitbook's own
 `Cargo.toml` declares no `[profile.release]`, so the wrapper adds none). It
 copies the result to `limitbook_adapter.so` at the repository root. Override
 the checkout with `ME_LIMITBOOK_SRC=/path/to/checkout`.
@@ -129,12 +171,15 @@ trials, dedicated cores 82/83) — i.e. at the low end of, and consistent
 with, the advertised 3–5 M/s limit-order ceiling once the full
 report-emission cost is paid.
 
-## Correctness verdict: INVALID — quantity-conservation violation (upstream matching bug)
+## Correctness: INVALID as shipped → VALID ×5 with the adapter's filed fix (upstream matching bug)
 
-Both `perf` (report-stream hash) and `audit` (state audit, 155/192 probes
-mismatched the `liquibook` baseline on `normal`) report **INVALID**. The
-cause is a genuine correctness bug **in limitbook itself**, not in the
-adapter:
+As shipped, the pinned engine is **INVALID** — both `perf` (report-stream hash)
+and `audit` (state audit, 155/192 probes mismatched the `liquibook` baseline on
+`normal`) fail. The cause is a genuine correctness bug **in limitbook itself**, not
+in the adapter; `build.sh` applies the upstream-filed fix (the partial-fill
+write-back `else` branch at each of the three matching sites, plus a follow-on
+doc-comment edit — see the **Source patch** section), after which limitbook is
+byte-identical to the consensus and VALID ×5. The bug, as shipped:
 
 **Partial fills never decrement the resting (maker) order's quantity.** In
 `src/order_book.rs`, the inner matching loop of `add_limit_order` (and the
@@ -173,10 +218,14 @@ phantom maker liquidity that is never drained:
 | ModifyReject  |    47,560 |     7,818 | 6.08× |
 
 Strict price-time priority with correct partial-fill accounting is the
-invariant the harness's baseline holds; limitbook at the pinned commit does
-not, so the report-stream hash and the state audit both fail. The adapter
-faithfully passes through the engine's results rather than masking the bug —
+invariant the harness's baseline holds; limitbook at the pinned commit, unpatched,
+does not, so the report-stream hash and the state audit both fail. Run unpatched,
 the first 48 messages (which contain no resting partial fill) hash
 byte-identically to canonical, which confirms the adapter's ABI mapping, id
 translation, IOC synthesis, modify path, and report formatting are correct and
-that the divergence originates entirely in the engine.
+that the divergence originates entirely in the engine. The adapter's `build.sh`
+then applies the partial-fill write-back fix (the added `else` branch at all
+three matching sites — see the **Source patch** section) — filed upstream as
+[solarpx/limitbook#1](https://github.com/solarpx/limitbook/issues/1) — after which
+limitbook is byte-identical to the consensus and **VALID ×5**, its
+conforming-"with fix" status in `CONSENSUS_CONFORMING_ENGINES.md`.

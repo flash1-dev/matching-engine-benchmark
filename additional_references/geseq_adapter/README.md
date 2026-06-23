@@ -8,7 +8,7 @@ Pinned commit: `ba3a635425eb910fdf018643ccac92fb4aca526a` (past the upstream fix
 for the price-cross defect we reported — see *Engine issue* below).
 
 This adapter is one of the worked examples in `additional_references/` —
-none are baselines and none are maintained. See `discoveries.md` at the
+none are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the
 repository root for the observations the harness produced against this
 snapshot.
 

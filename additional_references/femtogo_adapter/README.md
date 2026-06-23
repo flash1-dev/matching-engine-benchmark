@@ -8,7 +8,7 @@ input command ring and an output event ring).
 Pinned commit: `46667a95064bd028e8f0ec1bc6a2f776d86721e3`.
 
 This adapter is one of the worked examples in `additional_references/` — none
-are baselines and none are maintained. See `discoveries.md` at the repository
+are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the repository
 root for the observations the harness produced against this snapshot.
 
 ## Engine shape

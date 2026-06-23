@@ -1,0 +1,37 @@
+[package]
+name = "techieboy_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols and calls
+# straight into TechieBoy/rust-orderbook (crate `orderbook`, lib `orderbooklib`)
+# by path. No C++ shim.
+[lib]
+name = "techieboy_adapter"
+crate-type = ["cdylib"]
+# The adapter source is the single file at the adapter-dir root
+# (techieboy_adapter.rs), kept beside build.sh / README.md (the robaho_adapter
+# "source at the adapter root" convention). It is the crate root directly — its
+# module-level `//!` docs require that — so `path` points up out of wrapper/.
+path = "../techieboy_adapter.rs"
+
+[dependencies]
+# The engine crate. Its [lib] is named `orderbooklib` but the package is
+# `orderbook`, so the rename is explicit. build.sh applies a small, documented
+# source patch to the engine before this crate is compiled (caller-supplied
+# order ids + per-maker fill capture + public read accessors + two genuine bug
+# fixes). See build.sh, patch_engine.py, and README.md.
+# Committed as the default third_party path; build.sh rewrites it only when
+# ME_TECHIEBOY_SRC overrides the checkout location.
+orderbooklib = { package = "orderbook", path = "../../../third_party/techieboy_rust_orderbook" }
+
+# Keep this crate OUT of any enclosing workspace so a `cargo build` here compiles
+# only the engine crate (+ its single `rand` dependency), nothing more.
+[workspace]
+
+# Match the engine's own release profile (its Cargo.toml sets lto = true). House
+# rule for Rust adapters: nothing beyond what the ENGINE's Cargo.toml prescribes.
+[profile.release]
+lto = true

@@ -6,7 +6,7 @@ Wraps [Tzadiko/Orderbook](https://github.com/Tzadiko/Orderbook) behind
 Pinned commit: `dd136dd219ead95796f0e396e9e1395542bf673f`.
 
 This adapter is one of the worked examples in `additional_references/` —
-none are baselines and none are maintained. See `discoveries.md` at the
+none are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the
 repository root for the observations the harness produced against this
 snapshot.
 
@@ -86,7 +86,7 @@ rerun).
 
 2. **Drop `trades.reserve(orders_.size())` from `MatchOrders`** — removes
    a per-match O(orders_) allocation hint with no semantic effect on the
-   output stream. See `discoveries.md` for context.
+   output stream. See `CORRECTNESS_FINDINGS.md` for context.
 
 3. **`CancelOrder` -> `CancelOrderInternal` at the two `MatchOrders` tail
    sites** — a correctness fix, not a performance one. The tail cancels a
@@ -98,7 +98,9 @@ rerun).
    (`CancelOrderInternal`, what its bulk `CancelOrders` uses under its own
    lock); the patch switches the only two locked-context callers to it.
    Trades and end-of-call book state are identical to what an un-deadlocked
-   public cancel would produce. See `discoveries.md` for the full account
+   public cancel would produce. See the filed upstream issues
+   [#11](https://github.com/Tzadiko/Orderbook/issues/11) and
+   [#12](https://github.com/Tzadiko/Orderbook/issues/12) for the full account
    (including the correction of this engine's earlier `infeasible` verdict).
 
 ## Build / run

@@ -1,4 +1,5 @@
-/* test_sha256.c — verifies the vendored SHA-256 against NIST FIPS 180-4 vectors. */
+/* test_sha256.c — verifies the vendored SHA-256 against NIST FIPS 180-4 vectors.
+ * Build + run: cc -O2 tests/test_sha256.c third_party/sha256.c -o /tmp/test_sha256 && /tmp/test_sha256 */
 #include "../third_party/sha256.h"
 #include <stdio.h>
 #include <string.h>

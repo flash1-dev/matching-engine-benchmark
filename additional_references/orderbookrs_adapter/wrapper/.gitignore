@@ -1,1 +1,5 @@
 target/
+# Patched pricelevel crate materialized by ../build.sh ([patch.crates-io]
+# target). Derived from pristine pricelevel-0.7.0 + ../pricelevel-pricetime.patch
+# at build time, so it is not committed.
+pricelevel-patched/

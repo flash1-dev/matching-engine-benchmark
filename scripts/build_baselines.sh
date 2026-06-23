@@ -76,6 +76,74 @@ build_liquibook() {
     echo "built: liquibook_adapter.so"
 }
 
+# widen_quantcup_price_domain <src> — post-patch engine-source edit that lifts
+# QuantCup's price domain from uint16_t to a 32-bit type and sizes its flat
+# price-indexed book to 2^18 = 262144 ticks (~$1310 at $0.005/tick from a
+# $167.52 start, ~8x — far beyond any GBM realization; ~6 MiB array). The
+# canonical seed-23 workload stays well inside the original uint16_t range, so
+# these edits do not change matching output on it (verified: byte-identical
+# report-stream hashes); they only stop QuantCup aborting on wide-swing seeds
+# (e.g. flash-crash seed 711116612 reaches tick 68910 > 65534).
+#
+# Idempotent: run after `git reset --hard <pin>` + `git apply quantcup.patch`,
+# so it always rewrites pristine, freshly-patched source. Recorded in
+# docs/PATCHES.md. See QC_PRICE_MAX in adapters/quantcup_adapter.cpp (kept in
+# lockstep with kNumPricePoints below).
+widen_quantcup_price_domain() {
+    local src="$1"
+    python3 - "$src" <<'PY'
+import sys, re, pathlib
+src = pathlib.Path(sys.argv[1])
+
+# --- constants.h: widen t_price; add the array-dimension constant; keep the
+#     live-order cap off t_price's (now 4.29e9) max. ---
+c = (src / "constants.h").read_text()
+
+# 1. Widen the price word.  unsigned short (16-bit) -> uint32_t (32-bit).
+new = c.replace("typedef unsigned short t_price;", "typedef uint32_t t_price;")
+assert new != c, "constants.h: t_price typedef not found (already widened?)"
+c = new
+
+# 2. Decouple the flat book's dimension from kMaxPrice (which is t_price's max,
+#    now ~4.29e9 — far too large to allocate).  kNumPricePoints is the array
+#    size AND the empty-ask sentinel: valid price indices are [1, N-1], and
+#    askMin == N means "no resting ask" — exactly the original design where the
+#    array had kMaxPrice (65535) slots and askMin started at kMaxPrice.
+if "kNumPricePoints" not in c:
+    anchor = "constexpr t_price kMaxPrice = std::numeric_limits<t_price>::max();\n"
+    assert anchor in c, "constants.h: kMaxPrice anchor not found"
+    c = c.replace(anchor, anchor +
+        "\n"
+        "// Flat price-indexed book dimension (== empty-ask sentinel). The usable\n"
+        "// price domain is [1, kNumPricePoints - 1]. 2^18 ticks spans ~8x from a\n"
+        "// $167.52 start at $0.005/tick — beyond any workload realization. (Was\n"
+        "// implicitly kMaxPrice == 65535 when t_price was uint16_t.)\n"
+        "constexpr t_price kNumPricePoints = 262144;  // 2^18\n")
+
+# 3. kMaxLiveOrders aliased t_price's max (was 65535).  With a 32-bit t_price it
+#    would balloon to 4.29e9; it is the live-order cap, not a price, so pin it to
+#    the arena capacity instead.  (Defined-but-unused upstream, but kept sane.)
+c = c.replace(
+    "constexpr uint32_t kMaxLiveOrders = std::numeric_limits<t_price>::max();",
+    "constexpr uint32_t kMaxLiveOrders = static_cast<uint32_t>(kMaxNumOrders);")
+(src / "constants.h").write_text(c)
+
+# --- order_book.cpp: size the array and the empty-ask sentinel by the new
+#     dimension instead of kMaxPrice. ---
+o = (src / "order_book.cpp").read_text()
+o2 = o.replace("pricePoints.resize(kMaxPrice);", "pricePoints.resize(kNumPricePoints);")
+assert o2 != o, "order_book.cpp: pricePoints.resize(kMaxPrice) not found"
+o = o2
+o2 = o.replace("askMin = kMaxPrice;", "askMin = kNumPricePoints;")
+assert o2 != o, "order_book.cpp: askMin = kMaxPrice not found"
+o = o2
+(src / "order_book.cpp").write_text(o)
+
+print("widened QuantCup price domain: t_price=uint32_t, kNumPricePoints=262144 "
+      "(usable [1, 262143])")
+PY
+}
+
 build_quantcup() {
     say "quantcup"
     local src
@@ -87,6 +155,7 @@ build_quantcup() {
         git -C "$src" clean -fdq        # drop files added by a previous patch run
         git -C "$src" apply "$REPO/patches/quantcup.patch"
         echo "applied patches/quantcup.patch"
+        widen_quantcup_price_domain "$src"
     fi
     g++ $CXXFLAGS -fexceptions -frtti -DQC_MAX_NUM_ORDERS=2200000 \
         -I "$REPO/api" -I "$src" \

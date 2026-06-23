@@ -1,0 +1,40 @@
+[package]
+name = "gocronx_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols, calling
+# straight into gocronx/matcher's order book. No C++ shim.
+[lib]
+name = "gocronx_adapter"
+crate-type = ["cdylib"]
+# The adapter source is the single file at the adapter-dir root
+# (gocronx_adapter.rs), kept beside build.sh / README.md (the robaho_adapter
+# "source at the adapter root" convention). It is the crate root directly — its
+# module-level `//!` docs require that — so `path` points up out of wrapper/.
+path = "../gocronx_adapter.rs"
+
+[dependencies]
+# The engine under test: gocronx/matcher. The whole crate is one library (the
+# order book, matching, and types), so the adapter depends on it by path.
+# Committed as the default third_party path; build.sh rewrites it only when
+# ME_GOCRONX_SRC overrides the checkout location.
+matcher = { path = "../../../third_party/gocronx-matcher" }
+
+# Keep this crate standalone (no implicit workspace inheritance from any parent
+# Cargo.toml) so a `cargo build` here compiles only the engine + this adapter.
+[workspace]
+
+# House rule for Rust adapters: plain `cargo build --release` plus
+# RUSTFLAGS="-C target-cpu=native" (set by build.sh), and nothing more unless
+# the ENGINE's own Cargo.toml prescribes it. The engine (matcher) IS the
+# top-level library here (this wrapper just re-exports it), but Cargo applies
+# [profile.release] only from the crate being built — a path dependency's own
+# profile is ignored. matcher's Cargo.toml prescribes `lto = "thin"` and
+# `codegen-units = 1`, so we mirror exactly those two here to build the engine
+# the way its own project builds it. Nothing else is added.
+[profile.release]
+lto = "thin"
+codegen-units = 1

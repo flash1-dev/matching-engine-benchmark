@@ -107,39 +107,64 @@ produces it — as its definitional result, since a venue must survive its worst
 regime, not its best (`--scenario` narrows to one; `--compare` ranks engines by
 worst case).
 
-## The reference engines
+## Engines run through the harness
 
-Three reference engines span the design space — Liquibook[^liquibook] (tree of lists),
-QuantCup[^quantcup] (flat price-indexed array), and Exchange-core[^exchangecore] (direct-access order
-book on the JVM). Each has a distinct failure mode, which is the point of the
-five scenarios: QuantCup's flat array is fastest while prices stay in a
-narrow band (`static`) and collapses ~15× as the walk spreads
-(`flash-crash`); Liquibook's node-per-order multimap is the opposite —
-mildly volatility-sensitive, but it pays per resting order and collapses
-under `static`'s ~21,000-order standing book; Exchange-core is roughly flat
-but crosses into the JVM per message — a JNI cost the harness's batch delivery
-amortizes (`docs/METHODOLOGY.md`). All three nonetheless produce a
-byte-identical output stream — every report, not just trades — and that
-agreement is the correctness reference.
+The harness has been run against **63 distinct matching engines** so far. 
+Each engine was tested on randomly selected 100 seed values and checked whether they
+reach a consensus in the output and the book state, byte-for-byte identically.
 
-Throughput on the canonical workload (median of 10 trials, single matcher /
-single drainer on adjacent cores, Graviton4 / Neoverse-V2, `-O3 -march=native`),
-ranked by **worst-case throughput** — the lowest of an engine's five scenario
-results — because a venue must survive its worst regime, not its best. The
-scenario that produces each worst case is shown alongside:
+That consensus oracle is also a bug-finder. Running it against the field has surfaced
+**correctness bugs in more than 40 of these engines** that together identify
+**over 60 distinct defects** — **42 now filed upstream** (several already fixed by
+their maintainers), two more prepared but unfileable (the repo is archived or has
+issues disabled), and two already reported by others. **The large majority, roughly 55,
+are serious**: hard-invariant violations that break matching correctness —
+over-matching, lost or orphaned orders, wrong execution price, quantity
+non-conservation, crashes, or deadlocks. Most are correctable by a small patch:
+with the documented fix applied, **33 of these engines rejoin the conforming list** (conforming-"with fix", verified across the 100 seeds; see
+[`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)), leaving 8
+still non-conforming. 
 
-| Engine        | Worst-case throughput | Weakest scenario |
-|---------------|----------------------:|:-----------------|
-| FlashOne      | 33.20 M/s             | `normal`         |
-| Exchange-core | 1.40 M/s              | `flash-crash`    |
-| QuantCup      | 0.57 M/s              | `flash-crash`    |
-| Liquibook     | 0.03 M/s              | `static`         |
+## Pre-run sanity check
 
-FlashOne is the harness publisher's production engine, shown as a reference.
-It stands only as a target to beat on fully public, audited work: the harness,
-baselines, workload, and hashes that define that target are all open, so anyone can try.
-See `discoveries.md` for per-engine architecture notes, the twelve further surveyed engines,
-and how to interpret each row.
+Beyond the workload, each conforming engine also passes a **pre-run conformance gate** — a battery of hand-crafted edge cases the random workload never reaches (cancelling the middle of a same-price FIFO, sweeping several price levels, rejecting a stale cancel/modify of a fully-filled order, reusing a cancelled id), each oracled by the same byte-identical consensus and run before — and separately from — the timed workload. It tests only hard invariants every correct book must satisfy, never engine-specific conventions (e.g. how a quantity-decrease modify re-orders the queue); see [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
+
+## Consensus-conforming engines
+
+These **55** high-confidence engines (for 33 of them, with our suggested fix) reach byte-for-byte identical consensus on the output and book state across 100 random seeds (**+1 billion order messages** on each engine), and also pass the pre-run conformance gate ([`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)). **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (mechanics in `CORRECTNESS_FINDINGS.md`).
+
+The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials, or median of 3 in isolation for the wider-audit engines — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)):
+
+| Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
+|:-------|:---------|:------------|:---------------|:-----------------|:------|
+| FlashOne      | C++      | as shipped        | 33.20 (normal) | — | reference target |
+| geseq/cpp-orderbook | C++      | as shipped       | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
+| CppTrader (1041★) | C++      | as shipped       | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
+| Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) |
+| asthamishra | Rust | with fix | 5.60 (flash-crash) | — | bounds-check the tick array — no dropped orders above the ceiling |
+| llc993 (154★) | Rust     | as shipped       | 5.43 (swing-40) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
+| hroptatyr/clob | C | as shipped       | 4.73 (normal) | ~6M/s | b+tree CLOB, `_Decimal64` (no patch) |
+| mercury       | C++      | as shipped       | 3.94 (normal) | 3.2M/s | abseil b-tree |
+| microexchange (62★) | C++      | as shipped       | 3.62 (flash-crash) | 2.24M/s | array + bitmap |
+| Tzadiko (307★) | C++      | with fix | 3.39 (flash-crash) | — | IOC self-deadlock; two-site lock-wrapper fix |
+
+See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of all **55** conforming engines.
+
+## Non-conforming engines
+
+**8** engines remain non-conforming: each diverges from the consensus (over-matching, mis-pricing, dropping orders, crashes) or carries a known defect, and a single drafted engine fix does not (yet) restore it — a further undocumented bug, a bounded-price representational limit, a reject-by-design
+limitation, or a fix that also needs adapter-side support. The many other engines
+whose bugs the consensus surfaced **are** restored by their fix and are listed
+conforming-"with fix" in [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md).
+Non-conforming means only that the output differs from the consensus — not a
+judgment of engineering quality.
+
+See [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) for the full table.
+
+FlashOne is the harness publisher's production engine, shown as a reference. It
+stands only as a target to beat on fully public, audited work: the harness,
+baselines, workload, and hashes that define that target are all open, so anyone
+can try.
 
 Measure on your own platform:
 
@@ -147,35 +172,6 @@ Measure on your own platform:
 scripts/build_baselines.sh all
 scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ranking
 ```
-
-### Surveyed engines vs. their published figures
-
-Beyond the three calibration baselines, the harness has been run against the
-twelve third-party engines in `additional_references/` — each selected for
->100 GitHub stars, a published >10 M orders/sec claim, or an adapter contributed
-by the engine's own author, and wrapped by a worked adapter. Rows are ordered by each project's published claim, highest first.
-
-| Engine       | Harness worst-case (weakest scenario)   | Project's published figure |
-|:-------------|:----------------------------------------|---------------------------:|
-| piyush       | 3.17 M/s, `flash-crash` (INVALID — state audit) | ~160 M/s |
-| philipgreat  | 0.03 M/s, `static` (VALID with fix — 3 engine correctness patches) | ~125 M/s ("8 ns/order") |
-| limitbook    | 1.15 M/s, `static` (INVALID — over-match) | ~30 M/s |
-| robaho       | 1.89 M/s, `swing-25` (INVALID — price field) | 10–22 M/s |
-| geseq        | 1.57 M/s, `static` (VALID ×5) | 12.5–21 M/s |
-| mansoor      | 0.03 M/s, `normal` (VALID ×5) | >20 M/s |
-| jxm35        | 2.20 M/s, `normal` (INVALID — untraced) | 14 M/s |
-| femto_go     | 2.24 M/s, `normal` (VALID on `static`/`normal`; INVALID on others) | >10 M/s |
-| CppTrader    | 7.26 M/s, `normal` (VALID ×5) | ~3.2 M/s |
-| OrderBook-rs | 0.13 M/s, `static` (INVALID — priority only) | latency-focused |
-| Tzadiko      | 3.39 M/s, `flash-crash` (VALID with fix — engine deadlock patch) | not headlined |
-| cpp-orderbook | 4.28 M/s, `static` (VALID ×5) | none published |
-
-These findings are offered back, not aimed at anyone. The findings are factual and no judgment has been made for each project. Each is a reproducible,
-time-stamped *snapshot* of a specific commit — not a verdict on a project's
-quality — and several ship with a fix the reference adapter applies
-(`discoveries.md` documents every patch). Two were reported upstream and fixed —
-a CppTrader `ModifyOrder` crash and a geseq multi-level cross-through — and their
-history is in `RESOLVED_FINDINGS.md`.
 
 ## How it works
 
@@ -194,8 +190,9 @@ history is in `RESOLVED_FINDINGS.md`.
 - **Correctness** — the engine's full report output is hashed (SHA-256) and
   checked against `reference/correctness_hash.txt`, which ships a hash for
   every scenario at the canonical seed (23). The canonical entry — `normal` + seed 23 —
-  is the byte-identical consensus of all three baseline engines, so it favours
-  no single design. `docs/METHODOLOGY.md`.
+  is the byte-identical consensus the conforming field reproduces — first
+  established from three independent engines, so it favours no single design.
+  `docs/METHODOLOGY.md`.
 - **Anti-cheat** — a perf run checks the full report-stream hash; one audit
   run replays the workload through a baseline engine and runs a random-point
   order-book state audit. Every run probes the book at the same random points,
@@ -209,13 +206,17 @@ api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
 src/                    the harness — runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  twelve worked adapter examples for third-party engines (C++, Rust, Go)
+additional_references/  forty worked adapter examples for third-party engines (C++/Rust/Go/Java/Python/TS/C)
 patches/                source patches applied to baseline engines (QuantCup)
 reference/              the published canonical report output and its hash
 scripts/                build_baselines.sh, run_challenge.py, compare_results.py
-docs/                   METHODOLOGY, INTEGRATION, ANTI_CHEAT, PATCHES
+docs/                   METHODOLOGY, INTEGRATION, ANTI_CHEAT, CONFORMANCE, PATCHES
 tests/                  a SHA-256 self-test and three anti-cheat cheat adapters
-discoveries.md          observations the harness produced against the twelve surveyed engines
+CORRECTNESS_FINDINGS.md per-engine correctness verdict + filed-issue link, full audited set
+CONSENSUS_CONFORMING_ENGINES.md  the conforming roster + worst-case throughput
+NON_CONFORMING_ENGINES.md        the non-conforming roster
+RESOLVED_FINDINGS.md    findings since fixed upstream (CppTrader, geseq)
+SNAPSHOTS.md            the pinned upstream commit for every audited engine
 ```
 
 ## Requirements
@@ -224,27 +225,28 @@ discoveries.md          observations the harness produced against the twelve sur
 - `scripts/build_baselines.sh` additionally needs `git`; for the Exchange-core
   baseline it needs a JDK 11 and Maven.
 - Python 3.8+ for the wrapper scripts.
-- The `additional_references/` example adapters pull their own toolchains: the
-  three Rust adapters need Rust and the two Go adapters need Go — each `build.sh`
-  auto-installs the pinned toolchain (rustup / go.dev) if it is absent, which
-  requires `curl` and network access. The jxm35 adapter additionally needs a
+- The `additional_references/` example adapters pull their own toolchains (Rust,
+  Go, a JDK 11+ for the Java/JNI adapters, Node for the one TypeScript adapter;
+  the Python adapters embed CPython) — each `build.sh` auto-installs the pinned
+  toolchain (rustup / go.dev / etc.) if it is absent, which requires `curl` and
+  network access. The jxm35 adapter additionally needs a
   C++23 compiler and `libfmt` (`libfmt-dev`).
 
 ## FAQ
 
 Q. Why did you build this?
 
-A. To give the community a neutral, reproducible way to measure a matching engine's throughput and verify its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. That oracle — the byte-identical consensus of three independent reference engines — has already surfaced real bugs in several open-source matching engines, including a latent one in a codebase nearly nine years old.
+A. To give the community a neutral, reproducible way to measure a matching engine's throughput and verify its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. That oracle — the byte-identical consensus that independent open-source engines reproduce, first anchored by three of them — has already surfaced real bugs in several open-source matching engines, including a latent one in a codebase nearly nine years old.
 
 The same openness applies to our own claim: the paper's title — *"The World's Fastest Matching Engine Algorithm"* — is deliberately falsifiable. Beat FlashOne's published numbers on the same work and the title is wrong — a test we are openly inviting. If you reach comparable or higher numbers with your own design, or you think the method is unfair, we would love to hear from you.
 
 Q. Isn't this a self-serving benchmark — any conflict of interest in writing your own benchmark?
 
-A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical agreement of three independent open-source engines (Liquibook, QuantCup, Exchange-core), not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself.
+A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical consensus that independent open-source engines reproduce — first established from three of them (Liquibook[^liquibook], QuantCup[^quantcup], Exchange-core[^exchangecore]) and since reproduced across the whole conforming field — not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself.
 
 Q. I only want to check that my engine is correct — can I ignore the throughput number?
 
-A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the three-engine consensus *and* audits the live order book at random points. A `Verdict: VALID` means your engine reproduces the consensus output and maintains a real book, regardless of speed — for many users that correctness signal is the more valuable half.
+A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the byte-identical consensus *and* audits the live order book at random points. A `Verdict: VALID` means your engine reproduces the consensus output and maintains a real book, regardless of speed — for many users that correctness signal is the more valuable half.
 
 Q. Isn't a fast matching engine easy to build?
 

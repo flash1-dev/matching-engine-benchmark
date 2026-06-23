@@ -1,17 +1,20 @@
 # Additional references
 
-Twelve worked adapter examples that wrap third-party matching engines (seven
-C++, three Rust, two Go) behind `api/matching_engine_api.h`. Their purpose is
+Forty worked adapter examples that wrap third-party matching engines (twelve
+C++, ten Rust, eight Go, five Java, three Python, one TypeScript, one C) behind
+`api/matching_engine_api.h`. Their purpose is
 to show how an engine with a very different shape from the harness ABI can
 be made to drive the harness — and, by extension, to make the observations
-in `discoveries.md` reproducible from running code rather than asserted
+in `CORRECTNESS_FINDINGS.md` reproducible from running code rather than asserted
 from text.
 
-**The additional references are not baselines.** The correctness consensus
-is carried by the three baselines (Liquibook, QuantCup, Exchange-core)
-under `scripts/build_baselines.sh`. The adapters here are
+**The additional references are not the reference engines.** The published
+correctness reference comes from the three engines under `scripts/build_baselines.sh`
+(Liquibook, QuantCup, Exchange-core), and is reproduced across the conforming field. The adapters here are
 point-in-time **snapshots** — each `build.sh` clones the engine's upstream
-at a pinned commit and patches it where needed:
+at a pinned commit and patches it where needed. Every adapter's upstream repo
+and pinned commit is listed per engine in [`../SNAPSHOTS.md`](../SNAPSHOTS.md);
+the originally-shipped twelve:
 
 | Adapter                | Lang | Upstream                                                        | Pinned commit                              |
 |------------------------|------|-----------------------------------------------------------------|--------------------------------------------|
@@ -30,13 +33,13 @@ at a pinned commit and patches it where needed:
 
 The adapters are not maintained: if an upstream moves past its pinned commit
 the adapter may not build against the newer source, and any observation in
-`discoveries.md` describes the snapshot above and only the snapshot above. A
+`CORRECTNESS_FINDINGS.md` describes the snapshot above and only the snapshot above. A
 project's current `main` may already differ.
 
 Each subfolder has a short README that documents the engine's native API
-shape and how the adapter maps it to the harness ABI. Findings — bug
-observations, performance numbers — live in
-[`../discoveries.md`](../discoveries.md) (open findings) and
+shape and how the adapter maps it to the harness ABI. Correctness findings —
+bug observations and divergence mechanisms — live in
+[`../CORRECTNESS_FINDINGS.md`](../CORRECTNESS_FINDINGS.md) (open findings) and
 [`../RESOLVED_FINDINGS.md`](../RESOLVED_FINDINGS.md) (findings fixed upstream) so they have one
 place to read, update, and (if a project's behavior changes upstream) retire.
 

@@ -5,10 +5,11 @@ build/
 *.o
 *.so
 *.a
+target/
 
-# Compiled Java helper + generated EC classpath (build_baselines.sh artifacts)
+# Compiled Java helper + generated classpaths (build_baselines.sh + Java adapter build.sh artifacts)
 *.class
-/exchange_core.classpath
+*.classpath
 
 # Generated workload caches
 orders_*.bin

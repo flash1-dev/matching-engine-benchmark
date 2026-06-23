@@ -21,3 +21,19 @@ pricelevel = "0.7"
 # `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
 # build.sh), and nothing more unless the ENGINE's own Cargo.toml prescribes
 # it. OrderBook-rs declares no [profile.release], so neither do we.
+
+# Engine-source correctness fix (filed upstream as
+# https://github.com/joaquinbejar/OrderBook-rs/issues/88; see CORRECTNESS_FINDINGS.md):
+# OrderBook-rs does
+# its per-level matching in the `pricelevel` crate, which on a partial fill
+# re-queues the maker's residual at the TAIL of the level FIFO, demoting it
+# behind later same-price arrivals (a price-time-priority violation). build.sh
+# materializes a pristine pricelevel-0.7.0 under ./pricelevel-patched, applies
+# pricelevel-pricetime.patch (front-requeue fix), and this [patch.crates-io]
+# substitutes that patched copy for the crates.io `pricelevel` everywhere it is
+# used — both this wrapper's direct dep AND OrderBook-rs's transitive dep — so
+# the shipped engine is the conforming "with fix" engine. The path dir is
+# created by build.sh (git-ignored); a fresh checkout has nothing here until
+# build.sh runs.
+[patch.crates-io]
+pricelevel = { path = "pricelevel-patched" }

@@ -1,7 +1,7 @@
 # Resolved findings
 
 Engine-level defects the benchmark surfaced that have since been **fixed
-upstream**. Each is moved here out of `discoveries.md` — which tracks only
+upstream**. Each is moved here out of `CORRECTNESS_FINDINGS.md` — which tracks only
 current, open findings — with its original analysis preserved and the resolution
 recorded. The harness keeps pinning the pre-fix snapshot of each engine (so its
 published figures are unchanged) unless noted otherwise.
@@ -31,7 +31,7 @@ pick up the fix.
 ### The finding (as recorded before the fix)
 
 On the canonical workload CppTrader is clean: a byte-identical report stream
-against the three-baseline consensus on all five scenarios, with 192/192
+against the byte-identical consensus on all five scenarios, with 192/192
 state-audit checks matching on each. We record one engine-level defect
 anyway, because we hit it while stress-testing during the 2026-06-11
 workload re-anchoring and verified its mechanics in a debug build of the
@@ -123,7 +123,7 @@ pre-fix snapshot it carried was `3b9e9cd`.
 The same defect, and the same fix, appeared in the author's C++ port
 [geseq/cpp-orderbook](https://github.com/geseq/cpp-orderbook); there the fix was
 already merged upstream before we integrated it, so that engine's pinned commit
-contains it and its adapter needs no patch (see `discoveries.md`).
+contains it and its adapter needs no patch (see `CORRECTNESS_FINDINGS.md`).
 
 ### The finding (as recorded before the fix)
 
@@ -162,3 +162,57 @@ loop was an oversight or a deliberate simplification — the upstream README
 does not mention multi-level crossing semantics either way. A downstream
 consumer of fills running the un-patched engine would see fills at prices
 that should not have crossed.
+
+## GOnevo/matchingo — price-level volume not conserved after a partial fill
+
+**Status — RESOLVED upstream (2026-06-22).** Reported as GOnevo/matchingo
+[issue #1](https://github.com/GOnevo/matchingo/issues/1) and fixed the same day —
+the maintainer's reply was *"@OPTIONPOOL fixed — thanx for bug report!!!"* and the
+issue was closed as completed. The harness still pins the pre-fix snapshot
+(`7aa642f`, `v0.0.1`), so matchingo's published figure is unchanged; its reference
+adapter applies the same one-line write-back fix until the pin is bumped past the
+upstream release.
+
+### The finding (as recorded before the fix)
+
+matchingo's *matching* is correct — its trade/report stream is byte-identical to
+the consensus on all five scenarios. But the harness's 192-point depth audit
+fails: a price level's `volume` stops being conserved the moment an incoming order
+partially fills a resting order, and can even go negative.
+
+`OrderQueue.UpdateVolume` (`orderqueue.go:51-53`, `v0.0.1` / `7aa642f`) subtracts
+the resting order's *remaining* quantity (`o.Quantity`) instead of the *consumed*
+quantity. On a full fill the two coincide and the cache stays correct; on a
+partial fill they differ, so the level's cached `volume` drifts (and can go
+negative) even though the emitted trades are right — exactly what a
+report-stream-only check misses and the state audit catches. The fix subtracts
+the consumed quantity; the reference adapter applied it as a build step (same
+pattern as jxm35's `notify_trade` patch) until the upstream release landed.
+
+## CheetahExchange/orderbook-rs — `cancel_order` searches the opposite side's book
+
+**Status — RESOLVED upstream (2026-06-23).** Reported as
+CheetahExchange/orderbook-rs
+[issue #1](https://github.com/CheetahExchange/orderbook-rs/issues/1); the
+maintainer replied *"an obvious flaw … I'll release a new commit to fix it
+immediately"* and closed the issue as completed. The harness pins the pre-fix
+snapshot (`caa33f3`), so this engine (rostered as `cheetah`) stays non-conforming
+on the pinned commit; bumping the pin past the upstream fix restores cancel
+handling.
+
+### The finding (as recorded before the fix)
+
+orderbook-rs diverged from the consensus on all five scenarios. The cause is in
+the pure matcher (`src/matching/order_book.rs`, `caa33f3`), reachable directly
+through `OrderBook::{apply_order, cancel_order}` — the exact pair the engine's
+`run_applier` drives per order.
+
+A resting order is filed in its own side's book, but **`cancel_order` looked it up
+in the *opposite* side's book**, so no resting order could ever be cancelled:
+every cancel failed and the order leaked, diverging both the report stream and the
+book state from the consensus. We also flagged, as a suggestion, that the engine's
+10k-id de-dup `Window` assumes monotonically-increasing order ids and silently
+drops non-monotonic ones (~97% on the benchmark's id pattern); the maintainer
+confirmed this stems from an auto-incrementing-id assumption (a snowflake-style id
+would need a different structure) — a design assumption rather than a matcher bug,
+recorded for completeness.

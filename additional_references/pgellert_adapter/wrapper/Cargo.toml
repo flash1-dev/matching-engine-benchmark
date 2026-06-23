@@ -1,0 +1,30 @@
+# Standalone crate: an empty [workspace] table detaches it from the engine's
+# root workspace (members = ["raft", "engine"]), so building the adapter never
+# pulls the tonic/prost/raft/tokio server crates.
+[workspace]
+
+[package]
+name = "pgellert_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Pure-Rust cdylib. Exposes the harness ABI defined in
+# api/matching_engine_api.h as `#[no_mangle] pub extern "C"` symbols. The
+# engine's production matcher (engine::algos::optimised_fifo::FIFOBook) and its
+# `book` module are vendored verbatim under src/algos/ (see build.sh / the
+# module headers for the exact, minimal strip), so there is no external
+# dependency: optimised_fifo uses only std collections.
+[lib]
+name = "pgellert_adapter"
+# cdylib is the harness artifact; rlib is added only so the standalone bug
+# reproduction (examples/repro.rs) can link the vendored engine book. The
+# harness loads the cdylib; the rlib does not affect it.
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+
+# No [profile.release] overrides — house rule for Rust adapters: plain
+# `cargo build --release` plus RUSTFLAGS="-C target-cpu=native" (set by
+# build.sh). The engine's own engine/Cargo.toml declares no [profile.release].

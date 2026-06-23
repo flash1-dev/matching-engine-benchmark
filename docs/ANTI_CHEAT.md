@@ -32,9 +32,11 @@ either way, it cannot be a real engine only when audited.
 ## Correctness hash
 
 Every run — perf and audit — hashes the engine's full report stream (SHA-256)
-and compares it to the published reference (`docs/METHODOLOGY.md`). An engine
-that emits wrong or invented reports fails here. The reference is the consensus of
-three independent public engines, so it cannot be skewed toward any one design.
+and compares it to the published reference (`reference/correctness_hash.txt`; see
+`docs/METHODOLOGY.md`). An engine
+that emits wrong or invented reports fails here. The reference is the byte-identical
+consensus every conforming engine reproduces — first established from three
+independent public engines — so it cannot be skewed toward any one design.
 
 A run with no matching reference entry — a custom seed/scenario not in
 `reference/correctness_hash.txt`, or a run with `--write-reference` —

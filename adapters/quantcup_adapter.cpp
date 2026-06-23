@@ -116,15 +116,16 @@ uint64_t decode_id(const Field& f) {
 }
 
 // The harness contract uses int64 price_ticks; QuantCup's price-indexed book
-// stores prices in `t_price` (unsigned short). The canonical workload stays in
-// range, but a custom scenario could walk a price out of t_price — silent
-// modulo-2^16 truncation would corrupt the book invisibly, so we fail loud.
-// The usable domain is [1, t_price_max - 1]: the engine's pricePoints array
-// has t_price_max slots (valid indices stop one short of the max value) and
-// t_price_max itself doubles as its empty-ask sentinel, so the max value is
-// out of bounds on one side and sentinel-colliding on the other.
-constexpr int64_t QC_PRICE_MAX =
-    static_cast<int64_t>(std::numeric_limits<t_price>::max()) - 1;
+// stores prices in `t_price` and indexes a flat pricePoints array by price.
+// scripts/build_baselines.sh widens t_price to uint32_t and sizes that array to
+// OB::kNumPricePoints == 262144 ticks (~8x from a $167.52 start at $0.005/tick;
+// far beyond any GBM realization — see docs/PATCHES.md). The usable domain is
+// [1, kNumPricePoints - 1]: indices [1, N-1] are the resting price slots and
+// kNumPricePoints itself doubles as the empty-ask sentinel (askMin == N), so
+// the top value is out of bounds on one side and sentinel-colliding on the
+// other. A price past kNumPricePoints would index out of the array (silent heap
+// corruption), so we still fail loud at this widened ceiling as a safety net.
+constexpr int64_t QC_PRICE_MAX = static_cast<int64_t>(OB::kNumPricePoints) - 1;
 constexpr int64_t QC_PRICE_MIN = 1;
 
 /* Bounds-checked flat-vector lookup. nullptr / alive=false both mean "not
@@ -136,11 +137,13 @@ inline OrderState* find_order(uint64_t ext_id) {
 inline void check_qc_price(int64_t price, const char* context) {
     if (price < QC_PRICE_MIN || price > QC_PRICE_MAX) {
         std::fprintf(stderr,
-            "ERROR: QuantCup price %lld out of t_price range [%lld, %lld] (%s). "
-            "QuantCup's flat price-indexed book caps at uint16_t; use a scenario "
-            "whose price walk stays in range.\n",
+            "ERROR: QuantCup price %lld out of range [%lld, %lld] (%s). "
+            "QuantCup's flat price-indexed book is sized to %lld ticks "
+            "(see kNumPricePoints / docs/PATCHES.md); use a scenario whose "
+            "price walk stays in range.\n",
             (long long)price, (long long)QC_PRICE_MIN,
-            (long long)QC_PRICE_MAX, context);
+            (long long)QC_PRICE_MAX, context,
+            (long long)OB::kNumPricePoints);
         std::abort();
     }
 }

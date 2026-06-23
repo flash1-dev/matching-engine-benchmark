@@ -8,8 +8,8 @@
  * hoist the api contract forbids (api/matching_engine_api.h: engine_prebuild is
  * translation-only). The harness queries the book between the prebuild pass and
  * t0; because this engine rested orders during prebuild, the book is non-empty
- * there and the run is gated INVALID with an "Anti-cheat: pre-start book
- * NON-EMPTY" line — regardless of whether the output hash matches.
+ * there and the run is gated INVALID with an "Anti-cheat: pre-start book not
+ * empty by the API sentinels" line — regardless of whether the output hash matches.
  *
  * Contrast with tests/cheat_adapter.cpp, which keeps an empty book before t0
  * (so it passes this pre-flight) and is instead caught by the mode=audit state

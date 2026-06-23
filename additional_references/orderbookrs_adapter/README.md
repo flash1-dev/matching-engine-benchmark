@@ -7,7 +7,7 @@ Pinned commit: `53b4d2b0a657f4260e316d3a8ac3f0df0fc068bf` (orderbook-rs `0.8.0`,
 depends on `pricelevel = "0.7"` from crates.io).
 
 This adapter is one of the worked examples in `additional_references/` — none
-are baselines and none are maintained. See `discoveries.md` at the repository
+are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the repository
 root for the observations the harness produced against this snapshot.
 
 ## Engine shape
@@ -72,6 +72,60 @@ adding a C++ wrapper just to call into Rust.
   single-thread-owned cells (`UnsafeCell` behind a `Sync` shim — the
   `ThreadOwned` idiom shared with the philipgreat and limitbook adapters);
   no lock or atomic sits on the hot path.
+
+## Source patch
+
+`build.sh` applies **one** engine-source patch — `pricelevel-pricetime.patch`,
+which touches **two** files in the `pricelevel` crate. This **is** the engine's
+"with fix" correctness patch (not adapter instrumentation), so the shipped
+engine is the conforming one. It is filed upstream as
+[joaquinbejar/OrderBook-rs#88](https://github.com/joaquinbejar/OrderBook-rs/issues/88)
+(see `CORRECTNESS_FINDINGS.md`).
+
+The defect is a **price-time-priority violation across partial fills**.
+OrderBook-rs does its actual per-price-level matching in the `pricelevel` crate
+(`pricelevel = "0.7"`, pinned at `0.7.0`). In `PriceLevel::match_order`, when the
+head order at a level is only partially filled, its residual is re-queued with
+`self.orders.push(...)`, which lands it at the **tail** of the level's FIFO — so
+any same-price order that arrived *after* the original maker is matched ahead of
+the maker's remainder on the next trade at that price. Total resting quantity at
+the level stays correct, but the `maker_order_id` of subsequent same-price fills
+is wrong, which fails the benchmark report-stream hash on all five scenarios
+(quantities correct; counterparty wrong).
+
+The patch is an engine-source fix, not an adapter workaround, and lands in two
+files:
+
+- **`src/price_level/order_queue.rs`** — gives `OrderQueue` a deque-like backing
+  (`Mutex<VecDeque<Id>>` in place of the tail-only `crossbeam` `SegQueue<Id>`),
+  updating `new` / `push` / `pop` to match, and adds a new `push_front`
+  primitive that returns an order to the **front** of the queue, preserving its
+  time priority.
+- **`src/price_level/level.rs`** — in `match_order`'s partial-fill arm, re-queues
+  the maker's residual via the new `push_front` instead of `push`, so the head
+  keeps its original time priority across partial fills. The unrelated tail
+  `push` in `update_order` (explicit modify) is left as-is — modify-to-back is
+  correct.
+
+`pricelevel`'s own 144 `price_level` unit tests pass unchanged.
+
+Because `pricelevel` comes from crates.io and is a dependency of **both** this
+wrapper (direct) and OrderBook-rs (transitive), it cannot be patched in a single
+engine clone the way the C++ adapters patch their one checkout. Instead `build.sh`
+materialises a pristine `pricelevel-0.7.0` source tree under
+`wrapper/pricelevel-patched/` (git-ignored, rebuilt every run), applies the patch
+there with `patch -p1 --dry-run` first (an upstream version drift fails loud
+rather than silently shipping the bug) and then for real, and hard-verifies the
+front-requeue actually landed. The wrapper `Cargo.toml`'s `[patch.crates-io]`
+substitutes that patched copy for the crates.io `pricelevel` everywhere, so a
+single patched node resolves for both deps and the fix survives any
+`git reset --hard` of the engine clone (it lives outside it).
+
+No other engine source is altered. The only other source edit `build.sh` can make
+is a build-plumbing path swap: when `ME_ORDERBOOKRS_SRC` overrides the checkout
+location it `sed`s the wrapper `Cargo.toml`'s `path = ...` for OrderBook-rs to the
+override and restores it on exit — this changes where the engine is read from, not
+its logic, and is not a correctness patch.
 
 ## Build / run
 
