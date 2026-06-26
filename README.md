@@ -115,15 +115,14 @@ reach a consensus in the output and the book state, byte-for-byte identically.
 
 That consensus oracle is also a bug-finder. Running it against the field has surfaced
 **correctness bugs in more than 40 of these engines** that together identify
-**over 60 distinct defects** — **42 now filed upstream** (several already fixed by
-their maintainers), two more prepared but unfileable (the repo is archived or has
-issues disabled), and two already reported by others. **The large majority, roughly 55,
+**over 60 distinct defects** — **42 now respectfully filed upstream** (several already fixed by
+their maintainers). **The large majority, roughly 55,
 are serious**: hard-invariant violations that break matching correctness —
 over-matching, lost or orphaned orders, wrong execution price, quantity
 non-conservation, crashes, or deadlocks. Most are correctable by a small patch:
 with the documented fix applied, **33 of these engines rejoin the conforming list** (conforming-"with fix", verified across the 100 seeds; see
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)), leaving 8
-still non-conforming. 
+still non-conforming.
 
 ## Pre-run sanity check
 
@@ -133,7 +132,10 @@ Beyond the workload, each conforming engine also passes a **pre-run conformance 
 
 These **55** high-confidence engines (for 33 of them, with our suggested fix) reach byte-for-byte identical consensus on the output and book state across 100 random seeds (**+1 billion order messages** on each engine), and also pass the pre-run conformance gate ([`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)). **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (mechanics in `CORRECTNESS_FINDINGS.md`).
 
-The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials, or median of 3 in isolation for the wider-audit engines — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)):
+The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)).
+
+FlashOne is the harness publisher's .so shown as a reference. It
+stands as a target to beat on fully public, audited work.
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
@@ -166,7 +168,7 @@ The 5–12 M msg/s offered loads are the documented microburst range: Deutsche B
 
 **† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent number**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
 
-> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's P50 holds sub-microsecond past the loads charted here (480 ns at 20 M/s), its latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
+> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
 
 ## Non-conforming engines
 
@@ -178,11 +180,6 @@ Non-conforming means only that the output differs from the consensus — not a
 judgment of engineering quality.
 
 See [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) for the full table.
-
-FlashOne is the harness publisher's production engine, shown as a reference. It
-stands only as a target to beat on fully public, audited work: the harness,
-baselines, workload, and hashes that define that target are all open, so anyone
-can try.
 
 Measure on your own platform:
 
