@@ -283,7 +283,7 @@ modification made to build them.
 
 ## About Flash One Technologies
 
-We're a team of passionate Math & CS researchers advancing the technological frontier with research-level mathematics. Flash One is a patent IP licensing business, not a matching-engine vendor. We do not offer full matching-engine products.
+We're a team of passionate Math & CS researchers advancing the technological frontier with research-level mathematics. Flash One is a patent IP licensing business, not a matching-engine vendor. We do not offer full matching-engine products. For inquiries, please get in touch with contact@flash1.com.
 
 ## References
 
