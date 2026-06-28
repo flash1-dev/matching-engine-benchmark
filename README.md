@@ -281,6 +281,10 @@ MIT — see `LICENSE`. The three baseline engines are fetched from their own
 upstream repositories under their own licenses; `docs/PATCHES.md` records every
 modification made to build them.
 
+## About Flash One Technologies
+
+We're a team of passionate Math & CS researchers advancing the technological frontier with research-level mathematics. Flash One is a patent IP licensing business, not a matching-engine vendor. We do not offer full matching-engine products.
+
 ## References
 
 The market-microstructure claims in *Background* and the workload-calibration
