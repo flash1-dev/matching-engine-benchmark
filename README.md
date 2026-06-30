@@ -139,12 +139,12 @@ FlashOne is the harness publisher's .so shown as a reference. It stands as a tar
 | FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
 | e820 / weekend-orderbook | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
-| melin | Rust | as shipped | 7.86 | — | LMAX-style ring; latent stop-trigger cascade (filed) |
+| melin | Rust | with fix | 7.86 | — | LMAX-style ring; latent stop-trigger cascade (filed) |
 | CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
-| raymondshe | Rust | as shipped | 7.20 | — | Raft-replicated; latent phantom zero-qty match (filed) |
+| raymondshe | Rust | with fix | 7.20 | — | Raft-replicated; latent phantom zero-qty match (filed) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) |
 | matchcore | Rust | with fix | 6.58 | — | bound the marketable-limit walk (was paying through its own limit) |
-| chronex | C++ | as shipped | 6.47 | — | C++23; latent FOK/AON maker-price fill (filed) |
+| chronex | C++ | with fix | 6.47 | — | C++23; latent FOK/AON maker-price fill (filed) |
 | yashkukrecha | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak |
 
 See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of all **140** conforming engines.
