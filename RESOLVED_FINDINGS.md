@@ -218,3 +218,90 @@ drops non-monotonic ones (~97% on the benchmark's id pattern); the maintainer
 confirmed this stems from an auto-incrementing-id assumption (a snowflake-style id
 would need a different structure) — a design assumption rather than a matcher bug,
 recorded for completeness.
+
+## joaquinbejar/OrderBook-rs — partial fill demotes the resting maker to the FIFO tail
+
+**Status — RESOLVED upstream (2026-06-24).** Reported as OrderBook-rs
+[issue #88](https://github.com/joaquinbejar/OrderBook-rs/issues/88); the maintainer
+confirmed and reproduced it at the cited locations, traced the root cause to the
+upstream `pricelevel` crate, and fixed it: *"`pricelevel 0.8.0` shipped with the
+queue-priority fix (PriceLevel#39), and #131 bumps the dependency (`pricelevel`
+0.7 → 0.8.0) and adds a regression test on the matching path."* The harness pins the
+pre-fix snapshot, so the engine's published figure is unchanged; its reference
+adapter carried the equivalent fix until the dependency bump landed.
+
+### The finding (as recorded before the fix)
+
+A partial fill sent the resting maker to the back of its own price-level FIFO queue
+instead of leaving it at the front, so the next incoming order matched the wrong
+counterparty (a later same-price order) while the genuinely-oldest order waited.
+Quantities and the trade total stayed correct — only counterparty selection
+(time priority within a level) diverged from the consensus, VALID ×5 across 100
+seeds once corrected. The defect lived in the `pricelevel` dependency's in-level
+order container, which OrderBook-rs delegates to.
+
+## fran0x/matchina — phantom zero-quantity trades (no taker-exhaustion guard)
+
+**Status — RESOLVED upstream (2026-06-23).** Reported as matchina
+[issue #3](https://github.com/fran0x/matchina/issues/3); the maintainer confirmed —
+*"You were spot on: the inner loop kept going after the taker was fully filled,
+which caused the zero-quantity phantom trades. I've fixed it and added a [test]."*
+The harness pins the pre-fix snapshot; the reference adapter carried the one-line
+guard until the fix landed.
+
+### The finding (as recorded before the fix)
+
+The price-level matching loop had no taker-exhaustion guard: after an incoming order
+was fully filled, the loop kept iterating over remaining resting orders and emitted
+additional trades for zero quantity. Matching was otherwise correct; the phantom
+zero-qty trades diverged the report stream from the consensus, VALID ×5 across 100
+seeds with the guard added.
+
+## film42/rinok — buy-side maker mispricing
+
+**Status — RESOLVED upstream (2026-06-28).** Reported as rinok
+[issue #2](https://github.com/film42/rinok/issues/2); the maintainer confirmed and
+fixed it — *"I think you nailed the issue. I added more tests and this is now
+passing."* The harness pins the pre-fix snapshot; rinok is rostered EPL-1.0 (glue
+shipped, engine fetched at build) and is unchanged on the pinned commit.
+
+### The finding (as recorded before the fix)
+
+A buy order crossing a lower-priced resting sell printed the trade at the incoming
+buy's price rather than the resting maker's, so the aggressor lost the price
+improvement it was due (buy-initiated crossings only; the sell-initiated path was
+correct). Book state stayed consistent; only the trade price field diverged.
+
+## yihuang/pyorderbook — `cancel_order` KeyError on an emptied price level
+
+**Status — RESOLVED upstream (2026-06-28).** Reported as pyorderbook
+[issue #1](https://github.com/yihuang/pyorderbook/issues/1); the maintainer fixed it
+(*"thanks for reporting"*, closed as completed via commit
+[`46da454`](https://github.com/yihuang/pyorderbook/commit/46da4543b1)). The harness
+pins the pre-fix snapshot.
+
+### The finding (as recorded before the fix)
+
+`cancel_order` indexed `self.levels[price]` without guarding for a level that a prior
+fill had already emptied and removed, so a too-late cancel of an already-consumed
+order raised an unhandled `KeyError` and aborted the run instead of rejecting the
+cancel. Matching on the canonical workload was otherwise consensus-correct (the
+engine is rostered as a Wave-8 conformer).
+
+## dx1ngy/trading — fills priced at the sell order's price, not the maker's
+
+**Status — RESOLVED upstream (2026-06-29).** Reported as dx1ngy/trading
+[issue #1](https://github.com/dx1ngy/trading/issues/1); the maintainer confirmed —
+*"the reproduction, root-cause analysis, and diff are all clear, and the issue is
+confirmed"* — and closed it via commit
+[`b1f835d`](https://github.com/dx1ngy/trading/commit/b1f835dbfd). The harness pins
+the pre-fix snapshot; the reference adapter carried the maker-price fix
+(load-bearing for conformance) until the fix landed.
+
+### The finding (as recorded before the fix)
+
+`match()` priced every fill at the sell order's price, so a sell crossing a higher
+resting bid printed at the aggressor's lower price instead of the resting maker's —
+a price-time-priority (maker-price) violation. Matching, FIFO, and quantities were
+otherwise consensus-correct (Wave-9 conformer), VALID with the one-line maker-price
+correction.

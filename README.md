@@ -5,7 +5,9 @@ A reproducible benchmark for limit-order-book matching engine algorithms. Publis
 
 The harness replays a fixed, deterministic order-flow workload through an engine algorithm
 loaded as a shared library, verifies the result against a cryptographic hash,
-and measures throughput — so any two engine algorithms (hereafter "engine") can be compared on identical work.
+and measures throughput — so any two engine algorithms (hereafter "engine") can be compared on identical work. 
+
+We plan to exhaustively test all novel implementations of FIFO matching algorithms that humanity has ever published, and we did a reasonable survey to cover almost all publicly known architecture without duplicates. For further investigation request - please get in touch with contact@flash1.com.
 
 ## Quick start
 
@@ -109,20 +111,15 @@ worst case).
 
 ## Engines run through the harness
 
-The harness has been run against **63 distinct matching engines** so far. 
-Each engine was tested on randomly selected 100 seed values and checked whether they
-reach a consensus in the output and the book state, byte-for-byte identically.
+The harness has been run against **199 distinct matching engines** so far — **140 reproduce the consensus** (85 of them after our fix) and are listed in [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **59** diverge, cannot finish their slowest scenario within the message budget (infeasible), or crash, and are in
+[`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md).
 
-That consensus oracle is also a bug-finder. Running it against the field has surfaced
-**correctness bugs in more than 40 of these engines** that together identify
-**over 60 distinct defects** — **42 now respectfully filed upstream** (several already fixed by
-their maintainers). **The large majority, roughly 55,
-are serious**: hard-invariant violations that break matching correctness —
-over-matching, lost or orphaned orders, wrong execution price, quantity
-non-conservation, crashes, or deadlocks. Most are correctable by a small patch:
-with the documented fix applied, **33 of these engines rejoin the conforming list** (conforming-"with fix", verified across the 100 seeds; see
-[`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)), leaving 8
-still non-conforming.
+That consensus oracle is also a bug-finder. Running it against the field has surfaced correctness
+defects in **more than 100 of these engines** — **over 140 upstream bug reports have been respectfully filed**. Most are correctable by a small patch — with the documented fix applied the engine rejoins the conforming list (conforming-"with fix", verified across the 100 seeds; see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)). 
+
+The roster spans **20+ source languages** (C++, Rust, Go, Java, Python, C, TypeScript, Scala, Julia,
+Zig, Haskell, OCaml, and more) and **every common FIFO book architecture**. Per-engine verdicts, the one-line
+findings, and the filed issues are catalogued in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md).
 
 ## Pre-run sanity check
 
@@ -130,50 +127,50 @@ Beyond the workload, each conforming engine also passes a **pre-run conformance 
 
 ## Consensus-conforming engines
 
-These **55** high-confidence engines (for 33 of them, with our suggested fix) reach byte-for-byte identical consensus on the output and book state across 100 random seeds (**+1 billion order messages** on each engine), and also pass the pre-run conformance gate ([`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)). **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (mechanics in `CORRECTNESS_FINDINGS.md`).
+These **140** high-confidence engines (for 85 of them, with our suggested fix) reach byte-for-byte identical consensus on the output and book state across 100 random seeds (**+1 billion order messages** on each engine), and also pass the pre-run conformance gate ([`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)). **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (mechanics in `CORRECTNESS_FINDINGS.md`).
 
-The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)).
+The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)):
 
-FlashOne is the harness publisher's .so shown as a reference. It
-stands as a target to beat on fully public, audited work.
+FlashOne is the harness publisher's .so shown as a reference. It stands as a target to beat on fully public, audited work.
+
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
-| FlashOne      | C++      | as shipped        | 33.20 (normal) | — | reference target |
-| geseq/cpp-orderbook | C++      | as shipped       | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
-| CppTrader (1041★) | C++      | as shipped       | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
+| FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
+| e820 / weekend-orderbook | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix |
+| geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
+| melin | Rust | as shipped | 7.86 | — | LMAX-style ring; latent stop-trigger cascade (filed) |
+| CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
+| raymondshe | Rust | as shipped | 7.20 | — | Raft-replicated; latent phantom zero-qty match (filed) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) |
-| asthamishra | Rust | with fix | 5.60 (flash-crash) | — | bounds-check the tick array — no dropped orders above the ceiling |
-| llc993 (154★) | Rust     | as shipped       | 5.43 (swing-40) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
-| hroptatyr/clob | C | as shipped       | 4.73 (normal) | ~6M/s | b+tree CLOB, `_Decimal64` (no patch) |
-| mercury       | C++      | as shipped       | 3.94 (normal) | 3.2M/s | abseil b-tree |
-| microexchange (62★) | C++      | as shipped       | 3.62 (flash-crash) | 2.24M/s | array + bitmap |
-| Tzadiko (307★) | C++      | with fix | 3.39 (flash-crash) | — | IOC self-deadlock; two-site lock-wrapper fix |
+| matchcore | Rust | with fix | 6.58 | — | bound the marketable-limit walk (was paying through its own limit) |
+| chronex | C++ | as shipped | 6.47 | — | C++23; latent FOK/AON maker-price fill (filed) |
+| yashkukrecha | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak |
 
-See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of all **55** conforming engines.
+See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of all **140** conforming engines.
 
 ## Latency under burst load
 
-Throughput is the ceiling that an exchange internally measures; what *a trader actually experiences* when the market moves is **latency**. This table stress-tests the five highest-throughput, consensus-conforming engines, each in **its own weakest scenario**, and measures end-to-end matcher latency as the offered load rises. Every engine is therefore measured at its *hardest* operating point, not on a shared workload.
+Throughput is the ceiling that an exchange internally measures; what *a trader actually experiences* when the market moves is **latency** — and latency is a property of *headroom*, not average speed. This table stress-tests five high-throughput conforming engines, each in **its own weakest scenario**, and measures end-to-end matcher latency as the offered load rises. Every engine is therefore measured at its *hardest* operating point, not on a shared workload.
 
-The 5–12 M msg/s offered loads are the documented microburst range: Deutsche Börse's T7 reports inbound gateway flow peaking in the **millions of messages a second**, which is exactly what this measures.[^t7] **All values are nanoseconds, P50 / P99.**
+The 5–12 M msg/s offered loads are the documented microburst range: Deutsche Börse's T7 reports inbound gateway flow peaking in the millions of messages a second, which is exactly what this measures.[^t7] **All values are nanoseconds, P50 / P99.**
 
 | Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
 |:-------|:-----------------|:------|:------|:-------|
-| FlashOne  | normal        | 354 / 534   | 363 / 568   | 383 / 623  |
+| FlashOne  | normal       | 354 / 534   | 363 / 568   | 383 / 623 |
 | cpp-orderbook | swing-25     | 363 / 2,190     | 457 / 3,309     | 21,400,000 / 33,100,000 † |
 | CppTrader     | normal       | 387 / 1,984     | 658 / 3,606     | 23,200,000 / 39,900,000 † |
 | Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
 | asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
 
-**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent number**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
+**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
 
 > **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
 
 ## Non-conforming engines
 
-**8** engines remain non-conforming: each diverges from the consensus (over-matching, mis-pricing, dropping orders, crashes) or carries a known defect, and a single drafted engine fix does not (yet) restore it — a further undocumented bug, a bounded-price representational limit, a reject-by-design
-limitation, or a fix that also needs adapter-side support. The many other engines
+**59** engines are non-conforming: each diverges from the consensus (over-matching, mis-pricing, dropping orders, crashes), is correct but too slow to finish its worst scenario within the message budget (**infeasible at 2 M**), or carries a known latent defect — and where a fix was drafted it does not (yet) fully restore the engine (a further undocumented bug, a bounded-price representational limit, a reject-by-design
+limitation, or irreducible O(n²) cost). The many other engines
 whose bugs the consensus surfaced **are** restored by their fix and are listed
 conforming-"with fix" in [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md).
 Non-conforming means only that the output differs from the consensus — not a
