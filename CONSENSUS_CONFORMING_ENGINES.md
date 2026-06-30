@@ -13,10 +13,10 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | held/BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
 | CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
-| raymondshe | Rust | with fix | 7.20 | — | ship/MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
+| raymondshe | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) |
 | matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
-| chronex | C++ | with fix | 6.47 | — | ship/MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
+| chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
 | yashkukrecha | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak (clean; fastest pro-wave conformer) |
 | lobsim | C++ | as shipped | 6.07 | — | flat_hash_map + Boost intrusive list + max-heaps |
 | asthamishra | Rust | with fix | 5.60 (flash-crash) | — | bounds-check the tick array — no dropped orders above the ceiling |
@@ -25,7 +25,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | johannestampere | C++ | as shipped | 5.31 | — | get_best_price() returns 0 for empty book; all calls guarded, held (downgraded) |
 | bozoslav | C++ | as shipped | 5.01 | — | per-side price array + slab pool + id index, native IOC/FOK/modify |
 | hroptatyr/clob | C | as shipped | 4.73 (normal) | ~6M/s | b+tree CLOB, `_Decimal64` (no patch) |
-| onewhitedevil | C++ | with fix | 4.73 | — | ship/MIT; cancel never frees slab slot → bad_alloc [#1](https://github.com/1WHITE-DEVIL/lob-matching-engine/issues/1) |
+| onewhitedevil | C++ | with fix | 4.73 | — | MIT; cancel never frees slab slot → bad_alloc [#1](https://github.com/1WHITE-DEVIL/lob-matching-engine/issues/1) |
 | slmolenaar | C++ | with fix | 4.50 | — | CancelOrder swap-and-pop FIFO fix [#3](https://github.com/SLMolenaar/orderbook-simulator-cpp/issues/3) |
 | forever803 | C++ | as shipped | 4.33 | — | held/no-license; conforming; demo-scaffolding only |
 | ranjan2829 | C++ | with fix | 4.07 | — | 4 memory-safety defects fix [#3](https://github.com/ranjan2829/High-Frequency-Trading-Exchange-Engine/issues/3) |
@@ -34,9 +34,9 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | microexchange (62★) | C++ | as shipped | 3.62 (flash-crash) | 2.24M/s | array + bitmap |
 | faulaire | C++ | as shipped | 3.62 | — | Boost.MultiIndex: hashed id + ordered price |
 | daniele | C++ | with fix | 3.60 (static) | — | fill-report reads a maker freed in the same fill (matching is correct); [#1](https://github.com/Daniele122898/Trading-Engine/issues/1) |
-| nanobook | Rust | as shipped | 3.52 | — | ship/MIT; clean |
+| nanobook | Rust | as shipped | 3.52 | — | MIT; clean |
 | Tzadiko (307★) | C++ | with fix | 3.39 (flash-crash) | — | IOC self-deadlock; two-site lock-wrapper fix |
-| timothewt | C++ | with fix | 3.34 | — | ship/MIT; prev/next both shared_ptr → reference-cycle leak [#1](https://github.com/timothewt/OrderBook/issues/1) |
+| timothewt | C++ | with fix | 3.34 | — | MIT; prev/next both shared_ptr → reference-cycle leak [#1](https://github.com/timothewt/OrderBook/issues/1) |
 | piyush (148★) | C++ | with fix | 3.28 (flash-crash) | ~160 M/s | cached best-ask self-heal — re-seat to the next set level, not only on an empty side |
 | fmstephe (474★) | Go | with fix | 2.48 (static) | — | crossing trades print at the maker price, not the midpoint |
 | parity | Java | as shipped | 2.21 | — | RB-tree: TreeSet + fastutil id-map |
@@ -74,10 +74,10 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | kennethzhang | C++ | as shipped | 0.86 (static) | — | output-conforming — the adapter normalizes a taker-vs-maker price bug; [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1) |
 | i25959341 (550★) | Go | with fix | 0.72 (swing-25) | >300k/s | per-side Volume() correct after a partial fill |
 | jlob | Java/JNI | as shipped | 0.71 (static) | ~127 ns/op | L3 RB-tree, working JNI adapter |
-| vdt | JavaScript | with fix | 0.71 | — | ship/MIT; assert never imported → ReferenceError on side guard; hold |
+| vdt | JavaScript | with fix | 0.71 | — | MIT; assert never imported → ReferenceError on side guard; hold |
 | weblazy | Go | with fix | 0.71 (static) | — | GetFirst returns sentinel, GetLast nil-derefs on empty; guard fix [#1](https://github.com/weblazy/trade/issues/1) |
 | mh2rashi | C++ | with fix | 0.70 (swing-40) | ~23k/s | 1-line `deleteOrder` list-corruption/crash fix |
-| muzykantov | Go | with fix | 0.68 | — | ship/MIT; OrderSide.Volume() overcounts after partial fill; hold |
+| muzykantov | Go | with fix | 0.68 | — | MIT; OrderSide.Volume() overcounts after partial fill; hold |
 | wezrule | C++ | with fix | 0.64 (static) | — | PoolAlloc deletes move-assignment → Market::operator= won't compile; compile fix [#1](https://github.com/wezrule/WezosTradingEngine/issues/1) |
 | instrument_spot | Rust | as shipped | 0.60 (static) | — | depth maps pruned only on exact sum==0.0; f32 residual phantom level [#1](https://github.com/Andry-RALAMBOMANANTSOA/instrument_spot/issues/1) |
 | danielgatis | Go | with fix | 0.58 (swing-25) | — | normalize the decimal price key — equal prices share one level |
@@ -120,7 +120,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | aodr3w | Rust | with fix | 0.05 (static) | — | filled maker list-unlinked only; ids leak, zero-alloc arena OOMs [#1](https://github.com/aodr3w/zero-alloc-lob/issues/1) |
 | fractal | Java | with fix | 0.05 (static) | — | JNI; crossing now fills at the maker price, not the lowest offer [#1](https://github.com/FractalFinTech/OrderBook/issues/1) |
 | jpalounek | Python | with fix | 0.04 | — | AVL snapshot-iteration fix; sweep's sole diverger [#1](https://github.com/JPalounek/order-book/issues/1) |
-| baoyingwang | Java | as shipped | 0.04 (static; ~1.6 typical) | — | ship/MIT; FIFO-tiebreak subtraction overflows >24.85-day age; 6 deep-cell crashes; hold |
+| baoyingwang | Java | as shipped | 0.04 (static; ~1.6 typical) | — | MIT; FIFO-tiebreak subtraction overflows >24.85-day age; 6 deep-cell crashes; hold |
 | Liquibook (1479★) | C++ | as shipped | 0.03 (static) | — | baseline; price-keyed multimap of lists (native IOC residual handled adapter-side, #43) |
 | philipgreat (98★) | Rust | with fix | 0.03 (static) | ~8 ns/order | 3 cancel/modify-path correctness fixes |
 | cointossx (122★) | Java/JNI | with fix | 0.03 (static) | — | 2 fixes: B+Tree destructive `firstKey` + `AddOrderPreProcessor` wrong-side compare |
@@ -128,7 +128,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | dhyey | C++ | as shipped | 0.03 (static) | — | delete_order order_map[id] inserts then derefs null Order* → SIGSEGV [#1](https://github.com/Dhyey-Mehta/order-book/issues/1) |
 | rabbittrix | Rust | with fix | 0.02 | — | bid sort-key + cancel-stub fix [#1](https://github.com/rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform/issues/1) |
 | lll | C++ | with fix | 0.02 (static; ~0.4–2 typical) | — | held/no-license; modify_order_in_map no-op; hold (unfiled) |
-| rhodey | JavaScript | as shipped | ~0.02–0.12 (swings) | — | ship/MIT; clean |
+| rhodey | JavaScript | as shipped | ~0.02–0.12 (swings) | — | MIT; clean |
 | prystupa | Scala | with fix | 0.02 (static) | — | held/no-license; FastList.removeInto drops tail-removed-then-reappended element [#6](https://github.com/prystupa/scala-cucumber-matching-engine/issues/6) |
 | mkxzy | Java | as shipped | 0.02 (static) | — | clean; held for no license |
 | auralshin | Rust | as shipped | 0.01 (static) | — |  |
@@ -143,8 +143,8 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | techieboy (58★) | Rust | with fix | very slow (swing-25) | ~10 µs/match | 2 fixes: spurious zero-qty fills + stale best-bid/ask |
 | lightning (68★) | Go | with fix | very slow (static) | — | skiplist multi-level predecessor fix — no lost resting orders |
 | ridulfo (69★) | Python | with fix | very slow (static) | ~400k/s | consistent total order in __lt__ — no priority inversion / lost cancels |
-| khrapovs | Python | with fix | very slow (pure Python) | — | held/MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25) |
-| dabrowdev | TypeScript | as shipped | very slow (static) | — | ship/MIT; O(n²) cancel/sweep, OrderQueue.remove reindexes level; Codeberg — filing TODO |
+| khrapovs | Python | with fix | very slow (pure Python) | — | MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25) |
+| dabrowdev | TypeScript | as shipped | very slow (static) | — | MIT; O(n²) cancel/sweep, OrderQueue.remove reindexes level; Codeberg — filing TODO |
 | ms_engine | TypeScript | as shipped | very slow | — | no-liquidity market order rests remainder at sentinel −1; market-path only, held |
 | lsamber | Java | as shipped | very slow | — | same-price FIFO breaks on LocalDateTime.now() collision in non-stable PriorityQueue [#1](https://github.com/LS-Amber/financial-trading-system/issues/1) |
 | m15102785298 | Java | as shipped | very slow | — | binary-search LinkedList via get(mid) → O(n² log n) deep-book build [#1](https://github.com/15102785298/Matching-algorithm/issues/1) |
