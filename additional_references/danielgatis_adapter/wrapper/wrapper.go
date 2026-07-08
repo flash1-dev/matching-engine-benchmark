@@ -416,28 +416,35 @@ func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
 }
 
 // ---------------------------------------------------------------------------
-// Audit queries — answered from the shadow map (the engine's Depth() is an
-// O(book) walk and Bid()/Ask() peeks aren't exposed cheaply). Audit queries are
-// rare, so the O(N) scan is acceptable.
+// Audit queries — forwarded to the engine's own Depth() (a red-black-tree walk
+// of ob.bids / ob.asks under ob.RLock()), never the adapter shadow above (which
+// exists only to track per-order remaining quantity and is not consulted here).
+// Depth() builds BOTH sides by walking from that side's MaxPriceQueue() down
+// via LessThan(): bids therefore descend from the true best, so Bids()[0] is
+// the best bid — but asks ALSO descend from the asks side's own max price down
+// to its min, so Asks()[0] is the WORST ask; the best (lowest) ask is the min
+// over the slice. depth_at scans the matching side's levels for the queried
+// price and returns that level's own aggregated Amount() (maintained by the
+// engine's OrderQueue.Append/Remove/UpdateAmount on every rest/fill/cancel).
+// Audit queries are rare, so the O(book) Depth() walk is acceptable.
 // ---------------------------------------------------------------------------
 
 //export engine_query_best_bid
 func engine_query_best_bid() C.int64_t {
-	best := int64(math.MinInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 0 && e.price > best {
-			best = e.price
-		}
+	bids := gBook.Depth().Bids()
+	if len(bids) == 0 {
+		return C.int64_t(math.MinInt64)
 	}
-	return C.int64_t(best)
+	return C.int64_t(bids[0].Price().IntPart())
 }
 
 //export engine_query_best_ask
 func engine_query_best_ask() C.int64_t {
+	asks := gBook.Depth().Asks()
 	best := int64(math.MaxInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 1 && e.price < best {
-			best = e.price
+	for _, lvl := range asks {
+		if p := lvl.Price().IntPart(); p < best {
+			best = p
 		}
 	}
 	return C.int64_t(best)
@@ -446,14 +453,17 @@ func engine_query_best_ask() C.int64_t {
 //export engine_query_depth_at
 func engine_query_depth_at(price_ticks C.int64_t, side C.uint8_t) C.uint64_t {
 	pt := int64(price_ticks)
-	sd := uint8(side)
-	var total uint64
-	for _, e := range gShadow {
-		if e.alive && e.side == sd && e.price == pt {
-			total += uint64(e.remaining)
+	depth := gBook.Depth()
+	levels := depth.Bids()
+	if uint8(side) == 1 {
+		levels = depth.Asks()
+	}
+	for _, lvl := range levels {
+		if lvl.Price().IntPart() == pt {
+			return C.uint64_t(uint64(lvl.Amount().IntPart()))
 		}
 	}
-	return C.uint64_t(total)
+	return C.uint64_t(0)
 }
 
 func main() {} // required by buildmode=c-shared

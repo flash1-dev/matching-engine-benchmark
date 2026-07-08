@@ -8,7 +8,9 @@
 >
 > Companion docs, if you need depth: `docs/INTEGRATION.md` (prose version of the
 > contract), `docs/METHODOLOGY.md` (workload), `docs/ANTI_CHEAT.md` (what the
-> verdict checks). The authoritative ABI is `api/matching_engine_api.h`.
+> verdict checks), `docs/CONFORMANCE.md` (the pre-run edge-case gate), and
+> `docs/PATCHES.md` (upstream source patches). The authoritative ABI is
+> `api/matching_engine_api.h`.
 
 ---
 
@@ -128,9 +130,9 @@ while (!g_transport->push(g_sink, &r)) { /* spin: queue momentarily full */ }
    the standard workload; use 64-bit types anyway.
 5. **If you export the optional `engine_prebuild` hook, it may do exactly one
    thing: translate the ABI struct into your engine's native order *value*
-   (plus, at most, a one-time capacity `reserve`/`resize`).** Allocating the
-   resting node, inserting into the book, running any matching, or populating an
-   id→handle map there hoists matcher work off the clock — the harness detects
+   (plus, at most, a one-time capacity `reserve`/`resize`).** Inserting into the
+   book, running any matching, or otherwise binding an order to resting book
+   state there hoists matcher work off the clock — the harness detects
    it and gates the run INVALID. See §4.6.
 
 **Threads are allowed.** Match and report on whatever thread(s) reflect how the
@@ -187,7 +189,7 @@ user's engine *before* writing the adapter:
   §4.6.
 
 When in doubt, find the closest match in `additional_references/` and read
-its adapter end-to-end before writing yours; the forty examples cover most
+its adapter end-to-end before writing yours; the 40 shipped examples cover most
 real-world combinations of the points above.
 
 ---
@@ -394,10 +396,10 @@ Pick the closest and read it — they are complete, working adapters:
   small shadow map for the audit queries.
 - `adapters/exchange_core_adapter.cpp` + `adapters/HarnessExchangeCore.java` —
   a **JVM** engine reached over JNI (see §4.4).
-- `additional_references/` — forty worked adapter examples (twelve C++, ten Rust,
-  eight Go, five Java, three Python, one TypeScript, one C) wrapping third-party
-  matching engines. Each subdirectory has
-  its own README; see `additional_references/README.md` for the index and
+- `additional_references/` — 40 worked adapter examples wrapping third-party
+  matching engines (the permissively-licensed subset of the ~134 adapted across the
+  20+-language survey; the rest are held data-only). Each subdirectory has
+  its own README; see `additional_references/README.md` and each adapter's own README, and
   `CORRECTNESS_FINDINGS.md` for the correctness observations the harness
   produced against them.
 
@@ -448,12 +450,16 @@ doesn't drift. Worked examples:
 - `additional_references/robaho_adapter/build.sh` — `sed`-patches two
   headers for a C++20 conformance fix (`std::vector<const std::string>` →
   `std::vector<std::string>`).
-- `additional_references/tzadiko_adapter/build.sh` — `sed`-patches a
-  Windows-only `localtime_s` call to its POSIX equivalent, and switches the
-  engine's two FillAndKill tail-cancel sites from the locking public
-  `CancelOrder` to its own already-locked `CancelOrderInternal` (as shipped,
-  the tail self-deadlocks on the mutex `AddOrder` already holds the first
-  time an IOC partially fills).
+- `additional_references/tzadiko_adapter/build.sh` — applies four `sed`
+  patches: ports a Windows-only `localtime_s` call to its POSIX equivalent;
+  drops the per-match `trades.reserve(orders_.size())` allocation hint in
+  `MatchOrders`; switches the engine's two FillAndKill tail-cancel sites
+  from the locking public `CancelOrder` to its own already-locked
+  `CancelOrderInternal` (as shipped, the tail self-deadlocks on the mutex
+  `AddOrder` already holds the first time an IOC partially fills); and
+  fixes a lost-wakeup deadlock in the prune-thread teardown (the
+  destructor's condition-variable notify could race ahead of the waiter and
+  hang `join()`; the patch polls an atomic shutdown flag instead).
 
 Document each patch in `build.sh`'s comment header and in the adapter's
 README so a reader can audit what changed against upstream.
@@ -478,8 +484,8 @@ useful, omit otherwise:
   happen. The hoist is worth a few percent when the conversion is non-trivial.
 
   **Nothing else may happen in prebuild, and the harness enforces it.** Prebuild
-  must **not** allocate the resting order node, insert into the book, run any
-  matching, or populate an id→handle map — each is matcher work that belongs on
+  must **not** insert into the book, run any matching, or otherwise bind an
+  order to resting book state — each is matcher work that belongs on
   the clock, and hoisting it would make the timed number a lie. Two guards catch
   the variances (full detail in `docs/ANTI_CHEAT.md`):
 
@@ -504,8 +510,8 @@ useful, omit otherwise:
   in prebuild; `adapters/liquibook_adapter.cpp` does exactly that (prebuild only
   pre-sizes; the `SimpleOrder` and its id maps are built on the clock). **(b)**
   The one variance neither guard can see is order-*independent* work in your own
-  memory — pre-allocating one node per order without resting it leaves the book
-  empty *and* costs about as little as translation. Don't: it breaks the same
+  memory — setup that leaves the queryable book empty *and* costs about as
+  little as translation. Don't: it breaks the same
   contract and the adapters are source-auditable. The contract is the rule;
   the guards are the backstop.
 - **`engine_get_transport(void)`** — return the engine's own SPSC transport
@@ -555,6 +561,11 @@ Notes:
 ---
 
 ## 6. Run the harness
+
+First, run the conformance gate: `scripts/conformance_check.py
+./<engine>_adapter.so` (see [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)) — a
+pre-run battery of edge-case sequences that catches contract violations before
+a full perf/audit run. Then run the harness itself:
 
 ```sh
 ./harness --engine ./<engine>_adapter.so --scenario normal --mode perf

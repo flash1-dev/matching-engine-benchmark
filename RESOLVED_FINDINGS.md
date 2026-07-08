@@ -6,6 +6,20 @@ current, open findings — with its original analysis preserved and the resoluti
 recorded. The harness keeps pinning the pre-fix snapshot of each engine (so its
 published figures are unchanged) unless noted otherwise.
 
+| Upstream | Defect (one line) | Issue | Resolved | Maintainer response |
+|:--|:--|:--|:--|:--|
+| [chronoxor/CppTrader](#chronoxorcpptrader--modifyorder-order-index-corruption) | `ModifyOrder` erases through a stale hash-map handle after the re-match | [#42](https://github.com/chronoxor/CppTrader/issues/42) | 2026-06-18 | "Fixed! Thanks for reporting." |
+| [geseq/orderbook](#geseqorderbook--multi-level-crossings-ignore-the-price-predicate) | multi-level crossings ignore the price predicate | [#25](https://github.com/geseq/orderbook/issues/25) | 2026-06-20 | "Thanks for the report. I'll patch this shortly." — plus a CI gate running this benchmark |
+| [GOnevo/matchingo](#gonevomatchingo--price-level-volume-not-conserved-after-a-partial-fill) | price-level volume not conserved after a partial fill | [#1](https://github.com/GOnevo/matchingo/issues/1) | 2026-06-22 | "fixed — thanx for bug report!!!" |
+| [CheetahExchange/orderbook-rs](#cheetahexchangeorderbook-rs--cancel_order-searches-the-opposite-sides-book) | `cancel_order` searches the opposite side's book | [#1](https://github.com/CheetahExchange/orderbook-rs/issues/1) | 2026-06-23 | "an obvious flaw … I'll release a new commit to fix it immediately" |
+| [fran0x/matchina](#fran0xmatchina--phantom-zero-quantity-trades-no-taker-exhaustion-guard) | phantom zero-quantity trades (no taker-exhaustion guard) | [#3](https://github.com/fran0x/matchina/issues/3) | 2026-06-23 | "You were spot on … I've fixed it and added a test." |
+| [joaquinbejar/OrderBook-rs](#joaquinbejarorderbook-rs--partial-fill-demotes-the-resting-maker-to-the-fifo-tail) | partial fill demotes the resting maker to the FIFO tail | [#88](https://github.com/joaquinbejar/OrderBook-rs/issues/88) | 2026-06-24 | "`pricelevel 0.8.0` shipped with the queue-priority fix … adds a regression test" |
+| [film42/rinok](#film42rinok--buy-side-maker-mispricing) | buy-side maker mispricing | [#2](https://github.com/film42/rinok/issues/2) | 2026-06-28 | "I think you nailed the issue. I added more tests and this is now passing." |
+| [yihuang/pyorderbook](#yihuangpyorderbook--cancel_order-keyerror-on-an-emptied-price-level) | `cancel_order` KeyError on an emptied price level | [#1](https://github.com/yihuang/pyorderbook/issues/1) | 2026-06-28 | "thanks for reporting" |
+| [dx1ngy/trading](#dx1ngytrading--fills-priced-at-the-sell-orders-price-not-the-makers) | fills priced at the sell order's price, not the maker's | [#1](https://github.com/dx1ngy/trading/issues/1) | 2026-06-29 | "the reproduction, root-cause analysis, and diff are all clear" |
+
+The full analysis and resolution record for each follows.
+
 ## chronoxor/CppTrader — `ModifyOrder` order-index corruption
 
 **Status — RESOLVED upstream (2026-06-18).** Reported as CppTrader
@@ -228,7 +242,7 @@ upstream `pricelevel` crate, and fixed it: *"`pricelevel 0.8.0` shipped with the
 queue-priority fix (PriceLevel#39), and #131 bumps the dependency (`pricelevel`
 0.7 → 0.8.0) and adds a regression test on the matching path."* The harness pins the
 pre-fix snapshot, so the engine's published figure is unchanged; its reference
-adapter carried the equivalent fix until the dependency bump landed.
+adapter applies the equivalent fix until the pin is bumped past the upstream release.
 
 ### The finding (as recorded before the fix)
 
@@ -246,8 +260,8 @@ order container, which OrderBook-rs delegates to.
 [issue #3](https://github.com/fran0x/matchina/issues/3); the maintainer confirmed —
 *"You were spot on: the inner loop kept going after the taker was fully filled,
 which caused the zero-quantity phantom trades. I've fixed it and added a [test]."*
-The harness pins the pre-fix snapshot; the reference adapter carried the one-line
-guard until the fix landed.
+The harness pins the pre-fix snapshot; the reference adapter applies the one-line
+guard until the pin is bumped past the upstream release.
 
 ### The finding (as recorded before the fix)
 
@@ -286,7 +300,7 @@ pins the pre-fix snapshot.
 fill had already emptied and removed, so a too-late cancel of an already-consumed
 order raised an unhandled `KeyError` and aborted the run instead of rejecting the
 cancel. Matching on the canonical workload was otherwise consensus-correct (the
-engine is rostered as a Wave-8 conformer).
+engine is rostered as a conforming engine, with fix).
 
 ## dx1ngy/trading — fills priced at the sell order's price, not the maker's
 
@@ -295,13 +309,13 @@ engine is rostered as a Wave-8 conformer).
 *"the reproduction, root-cause analysis, and diff are all clear, and the issue is
 confirmed"* — and closed it via commit
 [`b1f835d`](https://github.com/dx1ngy/trading/commit/b1f835dbfd). The harness pins
-the pre-fix snapshot; the reference adapter carried the maker-price fix
-(load-bearing for conformance) until the fix landed.
+the pre-fix snapshot; the reference adapter applies the maker-price fix
+(load-bearing for conformance) until the pin is bumped past the upstream release.
 
 ### The finding (as recorded before the fix)
 
 `match()` priced every fill at the sell order's price, so a sell crossing a higher
 resting bid printed at the aggressor's lower price instead of the resting maker's —
 a price-time-priority (maker-price) violation. Matching, FIFO, and quantities were
-otherwise consensus-correct (Wave-9 conformer), VALID with the one-line maker-price
-correction.
+otherwise consensus-correct (a conforming engine, with fix), VALID with the one-line
+maker-price correction.

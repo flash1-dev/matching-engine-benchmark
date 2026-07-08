@@ -144,7 +144,7 @@ typedef struct {
  * them out. By default the harness supplies its own single-producer /
  * single-consumer queue and hands the engine the vtable + handle through
  * engine_init(). An engine MAY instead export engine_get_transport() to
- * substitute its own queue (e.g. a proprietary lock-free ring). The transport
+ * substitute its own queue. The transport
  * choice never affects correctness — only how reports are carried between the
  * matcher and the drainer.
  * ---------------------------------------------------------------------------*/
@@ -160,8 +160,8 @@ typedef struct {
     uint32_t (*drain)(void* handle, me_report_t* out, uint32_t max);
     /* Producer side: publish any writes the transport has buffered but not yet
      * made visible to the consumer. The harness calls this once, after
-     * engine_flush(), so a transport that batches its writes does not strand a
-     * partial last batch. A transport whose push() publishes immediately
+     * engine_flush(), so nothing the transport has buffered is left unpublished
+     * at end of stream. A transport whose push() publishes immediately
      * implements this as a no-op. */
     void     (*flush)(void* handle);
     /* Destroy a transport created by create(). */
@@ -173,7 +173,9 @@ typedef struct {
  * ===========================================================================*/
 
 /* Initialize the engine. Called once before any message.
- *  - seed         supplied at runtime to prevent hardcoding workload behaviour.
+ *  - seed         a per-run random nonce (NOT the workload seed) — supplied to
+ *                 prevent hardcoding to a fixed workload; it cannot be used to
+ *                 reconstruct the workload.
  *  - transport    the report transport vtable the harness has selected (the
  *                 harness default, or the engine's own from
  *                 engine_get_transport()).
@@ -261,10 +263,9 @@ const me_transport_t* engine_get_transport(void);
  * engine_on_* as usual.
  *
  * CONSTRAINT — translation only. engine_prebuild may ONLY marshal a message
- * into the engine's native order representation (and pre-size static capacity).
- * It must NOT insert into the book, match, allocate the resting order node, or
- * populate any id->handle map: that is matcher work and belongs in the timed
- * engine_on_* calls. The harness enforces this two ways: right after the
+ * into the engine's native order representation (and reserve capacity up front).
+ * It must NOT insert into the book, match, or otherwise bind an order to resting
+ * book state: that is matcher work and belongs in the timed engine_on_* calls. The harness enforces this two ways: right after the
  * prebuild pass, before the clock starts, it asserts the book is empty
  * (engine_query_best_bid() == INT64_MIN and engine_query_best_ask() ==
  * INT64_MAX), catching pre-insertion; and it times the prebuild pass, flagging

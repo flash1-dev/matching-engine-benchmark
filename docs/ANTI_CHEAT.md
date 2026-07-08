@@ -65,10 +65,10 @@ The optional `engine_prebuild` hook (`api/matching_engine_api.h`) runs once per
 message *before* the timed window, so an engine can marshal each message into
 its native order representation off the clock — modelling the gateway parse a
 real venue does outside the matcher. That hook is the one place an engine could
-cheat by doing **matcher** work early: allocating the resting node, inserting
-into the book, or pre-matching, then replaying a cached result in the timed
-call. The contract forbids it — prebuild may only translate and pre-size static
-capacity — and the harness enforces the visible half: immediately after the
+cheat by doing **matcher** work early: inserting into the book, matching, or
+pre-matching, then replaying a cached result in the timed
+call. The contract forbids it — prebuild may only translate and reserve
+capacity up front — and the harness enforces the visible half: immediately after the
 prebuild pass and before it starts the clock, it asserts the book is empty
 (`engine_query_best_bid() == INT64_MIN` and `engine_query_best_ask() ==
 INT64_MAX`). An engine that rested orders during prebuild is gated INVALID with
@@ -82,8 +82,7 @@ pre-matcher — one that matches into a private structure (leaving the queryable
 book empty) and replays cached results in the timed call. A second guard covers
 that: the harness times the prebuild pass and compares it to the timed run.
 Translation is a small fraction of matching, so an honest prebuild runs well
-under the timed window (Liquibook 0.02x, QuantCup 0.06x, FlashOne 0.53x on
-`normal`); a shadow pre-matcher front-loads the match, so its prebuild rivals or
+under the timed window (Liquibook 0.02x, QuantCup 0.06x on `normal`); a shadow pre-matcher front-loads the match, so its prebuild rivals or
 exceeds the run. Above 2x the harness prints a loud `Anti-cheat: pre-build ran
 Nx the timed window` flag; above 4x — a level no honest translation reaches — it
 gates the run INVALID. `tests/shadow_prematch_cheat.cpp` is the demonstration:
@@ -91,10 +90,12 @@ it passes the book-empty assert and is caught by the time bound. (The bound
 bites hardest exactly when a cheat succeeds: beating an honest engine needs a
 small timed window, which makes the prebuild/timed ratio large.)
 
-Together the two guards close pre-insertion and pre-matching. What remains is
-order-independent work an engine could hide in its own memory — pre-allocating a
-node per order without resting it leaves the book empty *and* costs about as
-little as translation, so neither guard sees it. That residue is why the
+Together the two guards close pre-insertion and *full* pre-matching: a shadow
+pre-matcher that front-loads the whole match drives the prebuild/timed ratio
+past the 4× gate. What they do not catch is a *partial* pre-match that hoists
+only some of the work and stays under the ratio, or order-independent setup an
+engine hides in its own memory that leaves the queryable book empty *and* costs
+about as little as translation. That residue is why the
 contract is also a rule engines are expected to honour; the fully robust
 alternative is to retire the hook and translate inside the timed loop (a small,
 uniform cost paid by every engine). The two guards are the cheaper option that
@@ -123,6 +124,25 @@ engine cannot distinguish a measured run from an audited one. Under batched
 delivery the harness ends each batch exactly at these audit-probe indices, so
 the book is probed at the same per-message points either way (see
 `docs/METHODOLOGY.md`, *Batch delivery*).
+
+## The audit-probe window is cost-bounded
+
+The 64 probe calls are timed separately and *excluded* from throughput, so an
+honest engine isn't charged for the harness's own book inspections. That
+exclusion is itself a place a cheat could hide: an engine that buffers each
+`engine_on_*` call cheaply and performs the real matching lazily inside
+`engine_query_*` (which the ABI blesses as a synchronization point) would push
+almost all its work into the excluded window and post an implausible number —
+while still answering every probe correctly and reproducing the report hash. So
+the harness bounds it. The excluded probe time is a negligible slice of an
+honest run (64 O(1)/O(log) queries across a multi-million-message run); when it
+exceeds a quarter of the raw timed window the run is gated INVALID with
+`Anti-cheat: audit probes consumed NN% of the timed window — matcher work hidden
+in engine_query_*`. `tests/query_drain_cheat.cpp` is the executable
+demonstration: a byte-identical, genuinely-correct Liquibook whose matching is
+relocated into the probe/flush calls — it passes the report hash *and* the
+192-point state audit, yet is still gated INVALID, proving the bound is an
+independent check, not a proxy for correctness.
 
 ## Held-out seeds: the strongest test
 

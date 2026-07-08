@@ -606,49 +606,59 @@ func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
 // ---------------------------------------------------------------------------
 // Audit queries.
 //
-// Read from the shadow map (the engine exposes best bid/ask only as the
-// bidMax/askMin price indices on its book, but the shadow is the source of
-// truth that already carries harness ticks and live remainders). O(N) scans,
-// but audit queries are rare.
+// Forward to the engine's own per-symbol OrderBook, not the adapter shadow:
+// bidMax/askMin are the engine's cached best-price index (empty sentinels 0 /
+// MAX_PRICE_LEVELS, set in NewMatchingEngine and maintained by
+// updateBestBid/updateBestAsk); depth_at walks the engine's
+// bidLevels[p]/askLevels[p] intrusive FIFO chain (head -> next, via
+// orderIndex/orders) summing each resting order's live size. Note: Cancel()
+// unlinks the order and fixes up the level's head/tail/size but never calls
+// updateBestBid/updateBestAsk, so bidMax/askMin can go stale — pointing at a
+// level Cancel just emptied — until the next trade happens to walk past it.
+// That staleness is the engine's real state and is surfaced here, not masked.
 // ---------------------------------------------------------------------------
 
 //export engine_query_best_bid
 func engine_query_best_bid() C.int64_t {
-	best := int64(math.MinInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 0 && e.price > best {
-			best = e.price
-		}
-	}
-	if best == math.MinInt64 {
+	bidMax := gEngine.books[symbol0].bidMax
+	if bidMax == 0 { // NewMatchingEngine / updateBestBid empty-book sentinel
 		return C.int64_t(math.MinInt64)
 	}
-	return C.int64_t(best)
+	return C.int64_t(fromEnginePrice(bidMax))
 }
 
 //export engine_query_best_ask
 func engine_query_best_ask() C.int64_t {
-	best := int64(math.MaxInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 1 && e.price < best {
-			best = e.price
-		}
-	}
-	if best == math.MaxInt64 {
+	askMin := gEngine.books[symbol0].askMin
+	if askMin >= MAX_PRICE_LEVELS { // empty-book sentinel
 		return C.int64_t(math.MaxInt64)
 	}
-	return C.int64_t(best)
+	return C.int64_t(fromEnginePrice(askMin))
 }
 
 //export engine_query_depth_at
 func engine_query_depth_at(price_ticks C.int64_t, side C.uint8_t) C.uint64_t {
-	pt := int64(price_ticks)
-	sd := uint8(side)
+	ep, ok := toEnginePrice(int64(price_ticks))
+	if !ok {
+		// Outside the engine's representable price window: the adapter never
+		// lets an order rest here (screened at insertion), so there is
+		// nothing to sum.
+		return 0
+	}
+
+	book := &gEngine.books[symbol0]
+	var level *PriceLevel
+	if uint8(side) == 0 {
+		level = &book.bidLevels[ep]
+	} else {
+		level = &book.askLevels[ep]
+	}
+
 	var total uint64
-	for _, e := range gShadow {
-		if e.alive && e.side == sd && e.price == pt {
-			total += uint64(e.remaining)
-		}
+	for oid := level.head; oid != 0; {
+		o := &gEngine.orders[gEngine.orderIndex[oid]]
+		total += uint64(o.size)
+		oid = o.next
 	}
 	return C.uint64_t(total)
 }

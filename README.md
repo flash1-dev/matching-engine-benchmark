@@ -1,13 +1,72 @@
 # Matching Engine Algorithm Performance Challenge
 
-A reproducible benchmark for limit-order-book matching engine algorithms. Published with
-[*"The World's Fastest Matching Engine Algorithm"*](https://arxiv.org/abs/2606.01183) (Flash One Technologies, 2026).[^paper]
+A reproducible benchmark for limit-order-book matching engine algorithms: one deterministic
+workload, one byte-identical correctness oracle, identical work for every engine. Published
+with [*"The World's Fastest Matching Engine Algorithm"*](https://arxiv.org/abs/2606.01183)
+(Flash One Technologies, 2026).[^paper]
 
-The harness replays a fixed, deterministic order-flow workload through an engine algorithm
-loaded as a shared library, verifies the result against a cryptographic hash,
-and measures throughput — so any two engine algorithms (hereafter "engine") can be compared on identical work. 
+The survey aims to cover every publicly available FIFO matching implementation without
+duplicates; to request coverage of an engine, contact contact@flash1.com.
 
-We plan to exhaustively test all novel implementations of FIFO matching algorithms that humanity has ever published, and we did a reasonable survey to cover almost all publicly known architecture without duplicates. For further investigation request - please get in touch with contact@flash1.com.
+## Results
+
+The harness has been run against **246 distinct matching engines** — every common FIFO book
+architecture, 20+ source languages. **160 reproduce the byte-identical consensus** (110 of
+them after a documented fix) and are listed in
+[`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **86**
+diverge, cannot finish their slowest scenario within the message budget, or crash
+([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
+
+The consensus oracle is also a bug-finder: the sweep surfaced **more than 267 distinct
+correctness bugs across 199 of the 246 engines**, and **over 172 GitHub issues have been
+filed upstream** — several already fixed by their maintainers
+([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition, per-engine verdicts,
+and one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the
+industry-authored subset is broken out in
+[`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+
+The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
+scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
+FlashOne is the harness publisher's algorithm, shown as a reference; it stands as a target to
+beat on fully public, audited work.
+
+**‡** = authored by a professional trading-industry engineer — a **personal side project, not an official repository of their employer**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+
+| Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
+|:-------|:---------|:------------|:---------------|:-----------------|:------|
+| FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
+| e820 / weekend-orderbook | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
+| geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
+| melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
+| CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
+| raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
+| Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
+| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | flat-array book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
+| matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
+| chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
+
+See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of
+all **160** conforming engines.
+
+### Latency under burst load
+
+Throughput is what an exchange measures internally; what a trader experiences when the market
+moves is **latency**, and latency under load is a property of headroom. This table stress-tests
+five high-throughput conforming engines, each in **its own weakest scenario**, at offered loads
+in the documented microburst range (5–12 M msg/s).[^t7] **All values are nanoseconds,
+P50 / P99.**
+
+| Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
+|:-------|:-----------------|:------|:------|:-------|
+| FlashOne  | normal       | 354 / 534   | 363 / 568   | 383 / 623 |
+| cpp-orderbook | swing-25     | 363 / 2,190     | 457 / 3,309     | 21,400,000 / 33,100,000 † |
+| CppTrader     | normal       | 387 / 1,984     | 658 / 3,606     | 23,200,000 / 39,900,000 † |
+| Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
+| asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
+
+**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
+
+> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
 
 ## Quick start
 
@@ -32,184 +91,81 @@ To benchmark your own engine algorithm, implement the C ABI in
 
 See `docs/INTEGRATION.md`.
 
-## Background
-
-A stock exchange runs on one piece of software called the *matching engine* —
-the part that pairs up incoming buy and sell orders and turns them into
-trades. It is the heart of the market, and how fast it works sets the speed
-limit for the whole venue. Trading doesn't arrive in a steady stream; it comes
-in bursts — the market sits quiet, then the instant a price moves or news
-breaks, everyone reacts at once and a flood of order messages lands within a
-few millionths of a second.[^microburst]
-
-Speed creates its own problem. The faster the exchange runs, the faster its
-customers can react — so they fire the next message sooner and the bursts grow
-sharper still; Deutsche Börse describes exactly this feedback loop, with
-*exchange latency* and *customer reaction time* chasing each other downward as
-customers "are constantly getting faster and send us more transactions in
-sharper peaks."[^t7] That feedback loop has only tightened as ever-faster
-hardware — and, lately, AI-driven trading — lets participants react faster
-still. Underneath every price move a race plays out: market makers scrambling
-to cancel quotes that have just gone stale before someone trades against them
-at the old price, and faster traders scrambling to hit those same quotes
-first.[^armsrace]
-
-This is why a matching engine is judged on its *throughput*, not its average
-speed. On a calm day almost anything is fast enough; what matters is
-**headroom** — how big a burst it can swallow before a queue forms behind it.
-The matcher is typically the narrowest stage of the whole pipeline: a venue's
-gateways and sequencers can take in far more traffic than the strictly serial
-match loop can clear — Deutsche Börse's T7 shows inbound flow peaking in the
-millions of messages a second at the gateway while only a few hundred thousand
-a second reach matching — so a burst piles up behind the matcher, not upstream
-of it.[^t7]
-
-The exchange's own goal is "constant low latency especially in high load
-situations (aka bursts)":[^t7] keep pace and delays stay flat; fall behind and
-every message in the burst waits in line, and that queue — not the average
-speed — is what becomes the worst-case delay (the "P99", the slowest 1 in 100)
-in the moments that matter most.[^serial] When the engine can't clear a burst,
-**market makers get picked off at stale prices, lose money, and quote more
-cautiously** — wider spreads, less size — so the market turns thin and expensive
-and the ordinary investor quietly pays the difference.[^marketquality]
-
-## What it measures
-
-A single matching engine on one symbol. The harness drives it one message at a
-time through ~2.0M new/cancel/modify messages; one-at-a-time is the default, but
-an engine may export the optional `engine_on_batch` entry point so the harness
-delivers messages in runs (one boundary crossing per run; per-message processing
-unchanged) — recommended for engines behind a language runtime (Go/cgo, Java/JNI)
-so the boundary cost is amortized rather than measured (`docs/METHODOLOGY.md`).
-The **engine emits its own
-report stream** (OrderAck / Trade / CancelAck / ModifyAck / CancelReject /
-ModifyReject) over an inter-thread transport drained on an adjacent core — so
-the measured throughput includes the
-matcher-to-publisher hand-off a real exchange pays. The engine may use threads:
-the harness measures it running its real production architecture.
-
-It does not measure multi-core scaling, networking, or risk checks; those are
-out of scope.
-
-## How a run works
-
-`./harness` runs in one of two modes:
-
-- **perf** — times the workload and reports throughput; verifies the output hash.
-- **audit** — replays the workload through a baseline engine and compares
-  order-book state at random points (anti-cheat); not timed.
-
-A full challenge is **10 perf runs + 1 audit run** per scenario, driven by
-`scripts/run_challenge.py`. The result is VALID only if every perf hash passes
-and the audit passes. Separating the passes keeps the measured runs free of any
-anti-cheat overhead while still validating the book. See `docs/ANTI_CHEAT.md`.
-By default `run_challenge.py` runs all five scenarios and reports the engine's
-**worst-case** throughput — the lowest of the five, with the scenario that
-produces it — as its definitional result, since a venue must survive its worst
-regime, not its best (`--scenario` narrows to one; `--compare` ranks engines by
-worst case).
-
-## Engines run through the harness
-
-The harness has been run against **199 distinct matching engines** so far — **140 reproduce the consensus** (85 of them after our fix) and are listed in [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **59** diverge, cannot finish their slowest scenario within the message budget (infeasible), or crash, and are in
-[`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md).
-
-That consensus oracle is also a bug-finder. Running it against the field has surfaced correctness
-defects in **more than 100 of these engines** — **over 140 upstream bug reports have been respectfully filed**. Most are correctable by a small patch — with the documented fix applied the engine rejoins the conforming list (conforming-"with fix", verified across the 100 seeds; see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)). 
-
-The roster spans **20+ source languages** (C++, Rust, Go, Java, Python, C, TypeScript, Scala, Julia,
-Zig, Haskell, OCaml, and more) and **every common FIFO book architecture**. Per-engine verdicts, the one-line
-findings, and the filed issues are catalogued in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md).
-
-## Pre-run sanity check
-
-Beyond the workload, each conforming engine also passes a **pre-run conformance gate** — a battery of hand-crafted edge cases the random workload reaches less often (cancelling the middle of a same-price FIFO, sweeping several price levels, rejecting a stale cancel/modify of a fully-filled order, reusing a cancelled id), each oracled by the same byte-identical consensus and run before — and separately from — the timed workload. It tests only hard invariants every correct book must satisfy, never engine-specific conventions (e.g. how a quantity-decrease modify re-orders the queue); see [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
-
-## Consensus-conforming engines
-
-These **140** high-confidence engines (for 85 of them, with our suggested fix) reach byte-for-byte identical consensus on the output and book state across 100 random seeds (**+1 billion order messages** on each engine), and also pass the pre-run conformance gate ([`docs/CONFORMANCE.md`](docs/CONFORMANCE.md)). **as shipped** = conforms unmodified; **with fix** = conforms after the minimal documented engine patch named (mechanics in `CORRECTNESS_FINDINGS.md`).
-
-The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials — see [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md)):
-
-FlashOne is the harness publisher's .so shown as a reference. It stands as a target to beat on fully public, audited work.
-
-
-| Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
-|:-------|:---------|:------------|:---------------|:-----------------|:------|
-| FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
-| e820 / weekend-orderbook | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix |
-| geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
-| melin | Rust | with fix | 7.86 | — | LMAX-style ring; latent stop-trigger cascade (filed) |
-| CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` |
-| raymondshe | Rust | with fix | 7.20 | — | Raft-replicated; latent phantom zero-qty match (filed) |
-| Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) |
-| matchcore | Rust | with fix | 6.58 | — | bound the marketable-limit walk (was paying through its own limit) |
-| chronex | C++ | with fix | 6.47 | — | C++23; latent FOK/AON maker-price fill (filed) |
-| yashkukrecha | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak |
-
-See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of all **140** conforming engines.
-
-## Latency under burst load
-
-Throughput is the ceiling that an exchange internally measures; what *a trader actually experiences* when the market moves is **latency** — and latency is a property of *headroom*, not average speed. This table stress-tests five high-throughput conforming engines, each in **its own weakest scenario**, and measures end-to-end matcher latency as the offered load rises. Every engine is therefore measured at its *hardest* operating point, not on a shared workload.
-
-The 5–12 M msg/s offered loads are the documented microburst range: Deutsche Börse's T7 reports inbound gateway flow peaking in the millions of messages a second, which is exactly what this measures.[^t7] **All values are nanoseconds, P50 / P99.**
-
-| Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
-|:-------|:-----------------|:------|:------|:-------|
-| FlashOne  | normal       | 354 / 534   | 363 / 568   | 383 / 623 |
-| cpp-orderbook | swing-25     | 363 / 2,190     | 457 / 3,309     | 21,400,000 / 33,100,000 † |
-| CppTrader     | normal       | 387 / 1,984     | 658 / 3,606     | 23,200,000 / 39,900,000 † |
-| Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
-| asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
-
-**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
-
-> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
-
-## Non-conforming engines
-
-**59** engines are non-conforming: each diverges from the consensus (over-matching, mis-pricing, dropping orders, crashes), is correct but too slow to finish its worst scenario within the message budget (**infeasible at 2 M**), or carries a known latent defect — and where a fix was drafted it does not (yet) fully restore the engine (a further undocumented bug, a bounded-price representational limit, a reject-by-design
-limitation, or irreducible O(n²) cost). The many other engines
-whose bugs the consensus surfaced **are** restored by their fix and are listed
-conforming-"with fix" in [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md).
-Non-conforming means only that the output differs from the consensus — not a
-judgment of engineering quality.
-
-See [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) for the full table.
-
-Measure on your own platform:
+Compare engines on your own platform:
 
 ```sh
 scripts/build_baselines.sh all
 scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ranking
 ```
 
-## How it works
+## Why worst-case throughput
 
-- **Workload** — a deterministic, realistically shaped equity order flow: a
-  geometric-Brownian-motion mid-price, power-law order depth,[^depth] and a 95% cancel[^cancel] /
-  15% IOC[^ioc] / 20% modify lifecycle with occasional duplicate cancels and
-  modifies — the paper benchmark's construction.[^paper] The canonical seed was
-  changed from 12345 to **23**: the harness hand-rolls every distribution so a
-  seed reproduces the same workload across compilers (the paper's `std::`
-  distributions do not), and that difference makes a given seed realise a
-  different resting book here than in the paper — the old seed-12345 run left
-  the `normal` book nearly empty, whereas the paper's carries ~5,300 resting
-  orders at the end of the run. Seed 23 is the realisation that reproduces the
-  paper's standing-book profile scenario for scenario (see
-  `docs/METHODOLOGY.md`).
-- **Correctness** — the engine's full report output is hashed (SHA-256) and
-  checked against `reference/correctness_hash.txt`, which ships a hash for
-  every scenario at the canonical seed (23). The canonical entry — `normal` + seed 23 —
-  is the byte-identical consensus the conforming field reproduces — first
-  established from three independent engines, so it favours no single design.
-  `docs/METHODOLOGY.md`.
-- **Anti-cheat** — a perf run checks the full report-stream hash; one audit
-  run replays the workload through a baseline engine and runs a random-point
-  order-book state audit. Every run probes the book at the same random points,
-  so an engine cannot tell a measured run from an audited one.
-  `docs/ANTI_CHEAT.md`.
+A matching engine is the serial heart of an exchange: per-symbol price–time matching is
+strictly sequential, so its single-core throughput caps the whole venue.[^serial] Order flow
+arrives in microbursts — Deutsche Börse's T7 measurements show inbound flow peaking in the
+millions of messages a second at the gateway while only a few hundred thousand a second reach
+matching[^t7] — so a burst queues behind the matcher, and that queue, not the average speed,
+becomes the worst-case delay in the moments that matter most.[^microburst] The feedback loop
+tightens over time: as the exchange gets faster, customers react faster and "send us more
+transactions in sharper peaks."[^t7]
+
+When the matcher falls behind, market makers are picked off at stale prices, lose money, and
+quote wider and thinner — costs that land on investors.[^armsrace][^marketquality] The
+benchmark's definitional result is therefore **worst-case throughput**: the lowest of an
+engine's five scenario results, with the scenario that produces it.
+
+*For the plain-language version of this argument and the market-quality evidence, see the
+paper's §2.*[^paper]
+
+## Methodology in brief
+
+**Scope.** A single matching engine on one symbol, driven one message at a time through ~2.0M
+new/cancel/modify messages (an optional `engine_on_batch` entry point amortises the boundary
+cost for engines behind a language runtime — the per-message processing is unchanged). The
+engine emits its own report stream (OrderAck / Trade / CancelAck / ModifyAck / CancelReject /
+ModifyReject) over an inter-thread transport drained on an adjacent core, so the measured
+throughput includes the matcher-to-publisher hand-off a real exchange pays. Multi-core
+scaling, networking, and risk checks are out of scope.
+
+**Workload.** A deterministic, realistically shaped equity order flow: GBM mid-price,
+power-law depth,[^depth] and a 95% cancel[^cancel] / 15% IOC[^ioc] / 20% modify lifecycle —
+the paper benchmark's construction.[^paper] The canonical seed is **23**; the harness
+hand-rolls every distribution so a seed reproduces the same workload across compilers
+(`docs/METHODOLOGY.md` records why the paper's seed 12345 realises differently here).
+
+**Correctness.** The engine's full report output is hashed (SHA-256) against
+`reference/correctness_hash.txt` — the byte-identical consensus first established from three
+independent engines (so it favours no single design) and since reproduced by the whole
+conforming field.
+
+**A full challenge** is 10 perf runs + 1 audit run per scenario
+(`scripts/run_challenge.py`); VALID only if every perf hash and the audit pass. The audit
+replays the workload through a baseline engine and probes order-book state at random points;
+every run probes the same points, so an engine cannot tell a measured run from an audited
+one (`docs/ANTI_CHEAT.md`). By default all five scenarios run and the engine's worst case is
+reported (`--scenario` narrows; `--compare` ranks).
+
+**Pre-run conformance gate.** Before any timed run, each engine passes a battery of **33
+hand-crafted edge cases**, reverse-engineered from latent bugs found across the survey, plus a
+**book-state audit** (best_bid / best_ask / depth checked against the consensus) that catches
+a stale or phantom book state that self-heals before any trade and so escapes the report
+hash. It tests only hard invariants every correct book must satisfy, never engine-specific
+conventions (`docs/CONFORMANCE.md`).
+
+## The rosters
+
+- [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) — the **160** conforming
+  engines (byte-identical on output and book state across 100 random seeds, **1 billion+ order
+  messages** each, plus the conformance gate). **as shipped** = conforms unmodified;
+  **with fix** = conforms after the minimal documented patch.
+- [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **86** whose output diverges,
+  or that cannot finish their worst scenario within budget. Non-conforming describes the output
+  against the consensus, not engineering quality.
+- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 52 industry-authored
+  engines, with the official/production repos and the production DEX matchers broken out.
+- [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) /
+  [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md) — per-engine findings and the fixes already
+  merged upstream.
 
 ## Repository layout
 
@@ -218,7 +174,7 @@ api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
 src/                    the harness — runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  forty worked adapter examples for third-party engines (C++/Rust/Go/Java/Python/TS/C)
+additional_references/  40 worked adapter examples for third-party engines — the permissively-licensed subset of the ~134 adapted across the survey (20+ languages incl. C++/Rust/Go/Java/Python/TypeScript/JavaScript/C#/Zig/C/Haskell/OCaml/Scala/Kotlin/Ruby); the rest are held data-only
 patches/                source patches applied to baseline engines (QuantCup)
 reference/              the published canonical report output and its hash
 scripts/                build_baselines.sh, run_challenge.py, compare_results.py
@@ -227,7 +183,7 @@ tests/                  a SHA-256 self-test and three anti-cheat cheat adapters
 CORRECTNESS_FINDINGS.md per-engine correctness verdict + filed-issue link, full audited set
 CONSENSUS_CONFORMING_ENGINES.md  the conforming roster + worst-case throughput
 NON_CONFORMING_ENGINES.md        the non-conforming roster
-RESOLVED_FINDINGS.md    findings since fixed upstream (CppTrader, geseq)
+RESOLVED_FINDINGS.md    findings since fixed upstream (CppTrader, geseq, matchingo, cheetah, OrderBook-rs, matchina, rinok, pyorderbook, dx1ngy)
 SNAPSHOTS.md            the pinned upstream commit for every audited engine
 ```
 
@@ -238,7 +194,7 @@ SNAPSHOTS.md            the pinned upstream commit for every audited engine
   baseline it needs a JDK 11 and Maven.
 - Python 3.8+ for the wrapper scripts.
 - The `additional_references/` example adapters pull their own toolchains (Rust,
-  Go, a JDK 11+ for the Java/JNI adapters, Node for the one TypeScript adapter;
+  Go, a JDK 11+ for the Java/JNI adapters, Node for the TypeScript/JavaScript adapters;
   the Python adapters embed CPython) — each `build.sh` auto-installs the pinned
   toolchain (rustup / go.dev / etc.) if it is absent, which requires `curl` and
   network access. The jxm35 adapter additionally needs a
@@ -262,7 +218,7 @@ A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the 
 
 Q. Isn't a fast matching engine easy to build?
 
-A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. Almost every public implementation is a variant of the same idea — a linked-list order queue inside a statically allocated contiguous region — yet, before our work, no one had pinned down the optimal size of that region or how those links are best implemented.
+A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. If writing a fast matching algorithm were easy, industry experts' own engines would routinely reproduce top results; their measured results are catalogued in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
@@ -284,8 +240,8 @@ We're a team of passionate Math & CS researchers advancing the technological fro
 
 ## References
 
-The market-microstructure claims in *Background* and the workload-calibration
-constants in *How it works* trace to the benchmark's companion paper and the
+The market-microstructure claims in *Why worst-case throughput* and the
+workload-calibration constants in *Methodology in brief* trace to the benchmark's companion paper and the
 primary literature it draws on. Full bibliographic detail (54 references) is in
 the paper; the notes below cite the specific sources behind each claim.
 

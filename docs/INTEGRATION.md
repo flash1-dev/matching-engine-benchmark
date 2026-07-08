@@ -5,7 +5,8 @@ An engine under test is a shared library (`.so`) that exports the C ABI in
 default, drives it one message at a time (see *Batch delivery* in
 `docs/METHODOLOGY.md`). This document is the how-to; the three adapters in
 `adapters/` are the minimal worked examples, and `additional_references/`
-contains forty worked adapters (twelve C++, ten Rust, eight Go, five Java, three Python, one TypeScript, one C), several of
+contains 40 worked adapters (the permissively-licensed subset of the ~134
+built across the 20+-language survey; the rest are held data-only), several of
 which patch the upstream source at build time and may be the closest
 template depending on the engine's shape.
 
@@ -141,10 +142,13 @@ because the upstream is missing something the harness needs:
 - `jxm35_adapter/build.sh` injects a per-fill `notify_trade` hook the engine
   declares but never calls.
 - `tzadiko_adapter/build.sh` replaces a Windows-only `localtime_s` call,
-  drops a per-match allocation hint, and fixes a self-deadlock in the
+  drops a per-match allocation hint, fixes a self-deadlock in the
   engine's FillAndKill tail-cancel (the public `CancelOrder` re-locked a
   mutex `AddOrder` already held; the patch switches the two sites to the
-  engine's own already-locked `CancelOrderInternal`).
+  engine's own already-locked `CancelOrderInternal`), and removes a
+  lost-wakeup deadlock in the engine's prune-thread teardown (the
+  destructor's condition-variable notify could race ahead of the waiter
+  and hang `join()`; the patch polls an atomic shutdown flag instead).
 
 Convention: apply the patch with `sed` or a Python `str.replace`, and make
 it idempotent — `git reset --hard <pinned-sha>` first so a rerun starts
@@ -200,3 +204,7 @@ passes the state audit. If the hash differs, diff your output against
 regenerate via `./harness --baseline liquibook --scenario normal --write-reference`)
 to find the first divergent report (the line format is in
 `docs/METHODOLOGY.md`).
+
+Run the pre-run conformance gate before benchmarking:
+`scripts/conformance_check.py ./<engine>_adapter.so` (see
+[`docs/CONFORMANCE.md`](CONFORMANCE.md)).

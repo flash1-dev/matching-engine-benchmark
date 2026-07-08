@@ -1,8 +1,9 @@
 # Additional references
 
-Forty worked adapter examples that wrap third-party matching engines (twelve
-C++, ten Rust, eight Go, five Java, three Python, one TypeScript, one C) behind
-`api/matching_engine_api.h`. Their purpose is
+40 worked adapter examples that wrap third-party matching engines behind
+`api/matching_engine_api.h` — the permissively-licensed subset of the ~134 adapters
+built across the 20+-language survey (the rest are built and measured but held
+data-only). Their purpose is
 to show how an engine with a very different shape from the harness ABI can
 be made to drive the harness — and, by extension, to make the observations
 in `CORRECTNESS_FINDINGS.md` reproducible from running code rather than asserted
@@ -22,7 +23,7 @@ the adapter may not build against the newer source, and any observation in
 `CORRECTNESS_FINDINGS.md` describes the pinned snapshot and only that snapshot. A
 project's current `main` may already differ.
 
-Each subfolder has a short README that documents the engine's native API
+Most subfolders have a short README that documents the engine's native API
 shape and how the adapter maps it to the harness ABI. Correctness findings —
 bug observations and divergence mechanisms — live in
 [`../CORRECTNESS_FINDINGS.md`](../CORRECTNESS_FINDINGS.md) (open findings) and

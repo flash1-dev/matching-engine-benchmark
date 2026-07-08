@@ -31,9 +31,12 @@
  *
  * Per-order shadow. A flat array indexed by order id holds
  * {oid -> price, side, remaining, alive}: it supplies the side/price echoed on
- * the synthesised acks (the engine's reports carry neither) and is the source
- * of truth for the audit queries, which scan it for best bid / best ask /
- * depth-at.
+ * the synthesised acks (the engine's reports carry neither) -- reject/ack
+ * adjudication only. The audit queries (engine_query_best_bid/best_ask/
+ * depth_at) do NOT read the shadow: they forward to the engine's own book,
+ * parsing OrderBook::toString() -- the engine's public dump of its private
+ * bids_/asks_ price trees -- so a stale/phantom engine book state would
+ * surface to the gate instead of being masked by the adapter's bookkeeping.
  *
  * Decimals. Workload prices/quantities are int64 ticks / uint32. The engine
  * stores Decimal = decimal::U8; Decimal(ticks, 0) carries each tick as internal
@@ -74,6 +77,8 @@
 // always-inlined.
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "matching_engine_api.h"
@@ -385,6 +390,84 @@ HOT_INLINE void onModify(const modify_t* m) {
     e->alive = (residual > 0);
 }
 
+// ---------------------------------------------------------------------------
+// toString() parsing -- the audit-query forwarding path.
+//
+// OrderBook::toString() is the engine's only public accessor over its private
+// bids_/asks_ price trees. It walks both boost::intrusive::rbtrees best-first
+// (bids_ compares with std::greater -> begin() is the highest bid; asks_
+// compares with std::less -> begin() is the lowest ask) and prints one price
+// level per line, best-first, until both sides are exhausted:
+//
+//   "<bidTotalQty>\t<bidPrice> | <askPrice>\t<askTotalQty>\n"
+//
+// Note the bid/ask column order is reversed (qty-then-price vs price-then-
+// qty) -- that is the engine's own toString(), not this adapter's choice. A
+// side that runs out before the other prints a blank column: "\t\t\t" for a
+// bid, nothing at all for an ask. Every price/qty in this workload is
+// Decimal(ticks, 0) -- a whole multiple of the fixed-point scale -- and
+// Decimal::to_string() (which operator<< uses) always trims the fractional
+// part and its point entirely when it is zero, so every field toString()
+// emits is a bare non-negative base-10 integer: a plain digit scan recovers
+// the tick exactly, no float/decimal parsing needed. The engine prunes an
+// OrderQueue from its price tree the instant its last order is removed
+// (pricelevel.cpp PriceLevel::remove), so there are no phantom zero-qty
+// levels for this parse to trip over.
+// ---------------------------------------------------------------------------
+
+// Splits one toString() line at the literal " | " separator it always emits
+// between the bid and ask columns.
+HOT_INLINE void splitBidAsk(std::string_view line, std::string_view& bidPart, std::string_view& askPart) {
+    auto pos = line.find(" | ");
+    if (pos == std::string_view::npos) {
+        bidPart = {};
+        askPart = {};
+        return;
+    }
+    bidPart = line.substr(0, pos);
+    askPart = line.substr(pos + 3);
+}
+
+// Parses a run of leading ASCII digits into an unsigned integer. Returns
+// false if there are none (a blank/placeholder column, e.g. the "\t\t\t"
+// bid side of a row where only the ask side still has a level).
+HOT_INLINE bool parseU64(std::string_view s, uint64_t& out) {
+    size_t i = 0, n = s.size();
+    size_t start = i;
+    uint64_t v = 0;
+    while (i < n && s[i] >= '0' && s[i] <= '9') {
+        v = v * 10 + uint64_t(s[i] - '0');
+        ++i;
+    }
+    if (i == start) return false;
+    out = v;
+    return true;
+}
+
+// One resting price level exactly as toString() prints one column:
+// bid = "qty\tprice", ask = "price\tqty" (reversed field order -- see above).
+HOT_INLINE bool parseBidLevel(std::string_view part, int64_t& price, uint64_t& qty) {
+    auto tab = part.find('\t');
+    if (tab == std::string_view::npos) return false;
+    uint64_t q = 0, p = 0;
+    if (!parseU64(part.substr(0, tab), q)) return false;
+    if (!parseU64(part.substr(tab + 1), p)) return false;
+    qty = q;
+    price = int64_t(p);
+    return true;
+}
+
+HOT_INLINE bool parseAskLevel(std::string_view part, int64_t& price, uint64_t& qty) {
+    auto tab = part.find('\t');
+    if (tab == std::string_view::npos) return false;
+    uint64_t p = 0, q = 0;
+    if (!parseU64(part.substr(0, tab), p)) return false;
+    if (!parseU64(part.substr(tab + 1), q)) return false;
+    price = int64_t(p);
+    qty = q;
+    return true;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -431,40 +514,58 @@ void engine_flush(void) {
 }
 
 int64_t engine_query_best_bid(void) {
-    int64_t best = INT64_MIN;
-    const Shadow* s = gShadowBase;
-    const size_t n = gShadowCap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == 0 && e.price > best) {
-            best = e.price;
-        }
-    }
-    return best;
+    const std::string dump = gBook->toString();
+    const std::string_view sv(dump);
+    const auto nl = sv.find('\n');
+    const std::string_view firstLine = sv.substr(0, nl == std::string_view::npos ? sv.size() : nl);
+
+    std::string_view bidPart, askPart;
+    splitBidAsk(firstLine, bidPart, askPart);
+
+    int64_t price;
+    uint64_t qty;
+    if (!parseBidLevel(bidPart, price, qty)) return INT64_MIN;
+    return price;
 }
 
 int64_t engine_query_best_ask(void) {
-    int64_t best = INT64_MAX;
-    const Shadow* s = gShadowBase;
-    const size_t n = gShadowCap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == 1 && e.price < best) {
-            best = e.price;
-        }
-    }
-    return best;
+    const std::string dump = gBook->toString();
+    const std::string_view sv(dump);
+    const auto nl = sv.find('\n');
+    const std::string_view firstLine = sv.substr(0, nl == std::string_view::npos ? sv.size() : nl);
+
+    std::string_view bidPart, askPart;
+    splitBidAsk(firstLine, bidPart, askPart);
+
+    int64_t price;
+    uint64_t qty;
+    if (!parseAskLevel(askPart, price, qty)) return INT64_MAX;
+    return price;
 }
 
 uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
+    const std::string dump = gBook->toString();
+    const std::string_view sv(dump);
+
     uint64_t total = 0;
-    const Shadow* s = gShadowBase;
-    const size_t n = gShadowCap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == side && e.price == price_ticks) {
-            total += e.remaining;
+    size_t pos = 0;
+    while (pos < sv.size()) {
+        const auto nl = sv.find('\n', pos);
+        const std::string_view line = (nl == std::string_view::npos) ? sv.substr(pos) : sv.substr(pos, nl - pos);
+
+        std::string_view bidPart, askPart;
+        splitBidAsk(line, bidPart, askPart);
+
+        int64_t lvlPrice;
+        uint64_t lvlQty;
+        if (side == 0) {
+            if (parseBidLevel(bidPart, lvlPrice, lvlQty) && lvlPrice == price_ticks) total += lvlQty;
+        } else {
+            if (parseAskLevel(askPart, lvlPrice, lvlQty) && lvlPrice == price_ticks) total += lvlQty;
         }
+
+        if (nl == std::string_view::npos) break;
+        pos = nl + 1;
     }
     return total;
 }

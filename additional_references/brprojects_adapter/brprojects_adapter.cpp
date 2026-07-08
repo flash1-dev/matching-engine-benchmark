@@ -41,11 +41,17 @@
  *
  * Shadow / queries. A flat array indexed by order id holds {price, side,
  * remaining, alive}. It supplies the side/price echoed on acks (the engine
- * tells the adapter nothing), adjudicates Cancel/Modify reject, and is scanned
- * by engine_query_best_bid / best_ask / depth_at. The engine's own
- * orderMap/AVL trees are the matcher; this shadow is the report/audit mirror,
- * kept in lockstep by the fill hook (decrement maker remaining) and the
- * new/cancel/modify handlers.
+ * tells the adapter nothing) and adjudicates Cancel/Modify reject (the
+ * engine's cancelLimitOrder silently no-ops a not-resting id). It is NOT used
+ * to answer engine_query_best_bid / best_ask / depth_at: those forward
+ * straight to the engine's own book — Book::getHighestBuy() / getLowestSell()
+ * (null when that side is empty) and Book::searchLimitMaps(price, side)
+ * ->getTotalVolume() (null Limit* -> 0 depth) — so a real book-state bug in
+ * the engine's own AVL-edge bookkeeping would surface here rather than being
+ * masked by an independently-correct shadow. The engine's own orderMap/AVL
+ * trees are the matcher; the shadow only mirrors what the engine itself never
+ * reports, kept in lockstep by the fill hook (decrement maker remaining) and
+ * the new/cancel/modify handlers.
  *
  * Types. Engine order ids and prices are `int` (32-bit signed). The canonical
  * workload's ids are dense 1..N (<=300k here) and prices are small positive
@@ -296,37 +302,27 @@ void engine_on_modify(const modify_t* modify)      { do_modify(modify); }
 void engine_flush(void) { /* synchronous matcher: nothing deferred */ }
 
 int64_t engine_query_best_bid(void) {
-    int64_t best = INT64_MIN;
-    const Shadow* s = g_shadow_base;
-    const size_t  n = g_shadow_cap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == 0 && e.price > best) best = e.price;
-    }
-    return best;
+    // Forward to the engine's own AVL-edge cache: nullptr means the buy side
+    // is empty (Book's ctor initialises highestBuy = nullptr; deleteLimit's
+    // updateBookEdgeRemove keeps it live on every removal).
+    Limit* l = g_book->getHighestBuy();
+    return l ? int64_t(l->getLimitPrice()) : INT64_MIN;
 }
 
 int64_t engine_query_best_ask(void) {
-    int64_t best = INT64_MAX;
-    const Shadow* s = g_shadow_base;
-    const size_t  n = g_shadow_cap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == 1 && e.price < best) best = e.price;
-    }
-    return best;
+    Limit* l = g_book->getLowestSell();
+    return l ? int64_t(l->getLimitPrice()) : INT64_MAX;
 }
 
 uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
-    uint64_t total = 0;
-    const Shadow* s = g_shadow_base;
-    const size_t  n = g_shadow_cap;
-    for (size_t i = 0; i < n; ++i) {
-        const Shadow& e = s[i];
-        if (e.alive && e.side == side && e.price == price_ticks)
-            total += e.remaining;
-    }
-    return total;
+    // searchLimitMaps does a plain map::find (no default-insertion) and
+    // returns nullptr for a price with no resting limit on that side; a live
+    // Limit's getTotalVolume() is the engine's own running total (incremented
+    // on Limit::append, decremented on both a fill and a cancel — see
+    // Order::cancel() / partiallyFillTotalVolume), i.e. the current resting
+    // quantity, not a cumulative traded volume.
+    Limit* l = g_book->searchLimitMaps(int(price_ticks), side == 0 /*buy*/);
+    return l ? uint64_t(l->getTotalVolume()) : 0;
 }
 
 void engine_on_batch(const me_msg_t* msgs, uint32_t n) {

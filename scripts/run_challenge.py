@@ -45,6 +45,10 @@ def is_path(spec):
     return spec.endswith(".so") or "/" in spec
 
 
+HARNESS_TIMEOUT_S = 1200   # outer backstop; the harness itself has a 600 s
+                           # per-phase watchdog, so this only fires if a run is
+                           # wedged past every internal guard.
+
 def run_harness(spec, scenario, mode, args):
     """Invoke ./harness once for (spec, scenario, mode); return the result dict."""
     cmd = [HARNESS, "--scenario", scenario, "--mode", mode]
@@ -57,7 +61,16 @@ def run_harness(spec, scenario, mode, args):
         cmd += ["--matcher-core", str(args.matcher_core)]
     if args.drainer_core is not None:
         cmd += ["--drainer-core", str(args.drainer_core)]
-    proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True,
+                              timeout=HARNESS_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        # The harness has its own 600 s per-phase watchdog; if the whole
+        # invocation still exceeds this outer bound the process is wedged —
+        # surface the trial as ERROR instead of hanging the challenge forever.
+        sys.stderr.write(f"ERROR: harness timed out ({HARNESS_TIMEOUT_S}s): {' '.join(cmd)}\n")
+        return {"_returncode": -1, "engine": engine_label(spec),
+                "scenario": scenario, "mode": mode, "verdict": "ERROR"}
     if proc.stderr.strip():
         sys.stderr.write(proc.stderr)
 

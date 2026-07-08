@@ -517,38 +517,38 @@ func engine_on_batch(msgs *C.me_msg_t, n C.uint32_t) {
 // ---------------------------------------------------------------------------
 // Audit queries.
 //
-// The engine's Bid()/Ask() are token-consuming (they CAS lastToken just like
-// AddOrder), so we cannot use them as read-only peeks without burning a
-// token slot and corrupting subsequent dispatch. The shadow map is the
-// source of truth: O(N) scan but audit queries are rare.
+// best_bid/best_ask forward to the engine's own Bid()/Ask(): each is
+// token-consuming (it CASes lastToken just like AddOrder/CancelOrder), so the
+// adapter advances the same gTok counter it already owns for every engine
+// call and passes the new token in — the identical discipline used for every
+// mutating call, not a separate "read-only" mode. This answers the
+// book-state audit from the engine's own resting orders instead of the
+// notification-fed shadow. A nil return (no resting order on that side) maps
+// to the MinInt64/MaxInt64 empty-book sentinel.
+//
+// depth_at stays on the shadow map below: the engine exposes no per-price
+// accessor (Bid()/Ask() only ever return the single best order on a side),
+// so there is no engine state to forward an arbitrary-price query to.
 // ---------------------------------------------------------------------------
 
 //export engine_query_best_bid
 func engine_query_best_bid() C.int64_t {
-	best := int64(math.MinInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 0 && e.price > best {
-			best = e.price
-		}
-	}
-	if best == math.MinInt64 {
+	gTok++
+	o := gBook.Bid(gTok)
+	if o == nil {
 		return C.int64_t(math.MinInt64)
 	}
-	return C.int64_t(best)
+	return C.int64_t(fromDecPrice(o.Price))
 }
 
 //export engine_query_best_ask
 func engine_query_best_ask() C.int64_t {
-	best := int64(math.MaxInt64)
-	for _, e := range gShadow {
-		if e.alive && e.side == 1 && e.price < best {
-			best = e.price
-		}
-	}
-	if best == math.MaxInt64 {
+	gTok++
+	o := gBook.Ask(gTok)
+	if o == nil {
 		return C.int64_t(math.MaxInt64)
 	}
-	return C.int64_t(best)
+	return C.int64_t(fromDecPrice(o.Price))
 }
 
 //export engine_query_depth_at

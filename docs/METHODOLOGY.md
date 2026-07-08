@@ -257,8 +257,8 @@ absorb the burst in whatever regime the market happens to be in.
 Every cancel, modify, and fill names an order by its client order id, so on
 each one the engine — or its adapter — must resolve that id to the engine's own
 internal order, a lookup on the hot path. Where that resolution lives differs
-by engine: one whose public API takes the client id directly (FlashOne,
-Exchange-core) resolves it internally, while one that returns its own handle on
+by engine: one whose public API takes the client id directly (Exchange-core)
+resolves it internally, while one that returns its own handle on
 insert (Liquibook, QuantCup) has the adapter hold the id→handle map (each
 adapter README documents its mapping). To keep the lookup apples-to-apples —
 and not penalise an engine that allocates its order table statically, the way

@@ -225,6 +225,31 @@ void install_guards() {
     }
 }
 
+/* Whether cores `a` and `b` share a physical core (SMT siblings). Reads the
+ * kernel's thread_siblings_list for `a`; returns 1 if `b` is a sibling, 0 if
+ * distinct, -1 if the topology can't be read. Recorded in the result JSON so a
+ * published number can be audited for whether the "adjacent-core" drainer
+ * actually landed on the matcher's own physical core (a materially different,
+ * shared-L1/L2 hand-off than the advertised cross-core model). */
+int cores_same_physical(int a, int b) {
+    char path[128];
+    std::snprintf(path, sizeof(path),
+        "/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list", a);
+    FILE* fp = std::fopen(path, "r");
+    if (!fp) return -1;
+    char buf[256] = {0};
+    size_t got = std::fread(buf, 1, sizeof(buf) - 1, fp);
+    std::fclose(fp);
+    if (got == 0) return -1;
+    // Format: comma-separated tokens, each "N" or a "N-M" range.
+    for (char* tok = std::strtok(buf, ",\n"); tok; tok = std::strtok(nullptr, ",\n")) {
+        int lo = 0, hi = 0;
+        if (std::sscanf(tok, "%d-%d", &lo, &hi) == 2) { if (b >= lo && b <= hi) return 1; }
+        else if (std::sscanf(tok, "%d", &lo) == 1)    { if (b == lo) return 1; }
+    }
+    return 0;
+}
+
 }  // namespace
 
 /* ---- load_workload (declared in harness.h) ------------------------------- */
@@ -406,7 +431,21 @@ int main(int argc, char** argv) {
 
     // --- run ----------------------------------------------------------------
     bool matcher_pinned = pin_to_core(matcher_core);
-    eng.init(seed, transport, queue);
+    // Anti-cheat: engine_init receives a per-run random nonce, NOT the workload
+    // seed. The generator is public and deterministic, so handing the engine the
+    // real seed would let it regenerate the whole workload off-clock inside the
+    // untimed engine_init and precompute results — undermining "the measured
+    // window is matching work alone". The nonce still prevents hardcoding to a
+    // fixed workload; it simply can't reconstruct one.
+    std::random_device init_rd;
+    uint64_t init_nonce =
+          (static_cast<uint64_t>(init_rd()) << 32) ^ static_cast<uint64_t>(init_rd());
+    // Watchdog the setup too: a hang in engine_init, the prebuild pass, or the
+    // pre-flight queries would otherwise wedge the harness silently. The timed
+    // loop below re-arms this alarm; the teardown re-arms it again. (ANTI_CHEAT.md
+    // promises a hang is reported as failed, not just a crash.)
+    alarm(RUN_TIMEOUT_S);
+    eng.init(init_nonce, transport, queue);
     int threads_after_init = current_thread_count();
 
     // Pre-build the engine ABI struct for every message — before the timed
@@ -541,19 +580,43 @@ int main(int argc, char** argv) {
         }
     }
     eng.flush();               // pipeline barrier — any deferred work is counted here
-    transport->flush(queue);   // publish any reports a batching transport buffered
+    transport->flush(queue);   // final publish so nothing is stranded at end of stream
 
     auto t1 = std::chrono::steady_clock::now();
     alarm(0);
     int threads_after_run = current_thread_count();
 
+    // Watchdog the teardown too: a drainer that never quiesces (a buggy
+    // engine-supplied transport->drain) or a deadlocking engine_shutdown would
+    // otherwise hang the harness forever instead of being reported as failed.
+    alarm(RUN_TIMEOUT_S);
     drain.running.store(false, std::memory_order_release);
     drainer.join();
     eng.shutdown();
+    alarm(0);
 
-    double elapsed = std::chrono::duration<double>(t1 - t0).count()
-                   - static_cast<double>(excluded_ns) / 1e9;
+    const double raw_window_s = std::chrono::duration<double>(t1 - t0).count();
+    double elapsed = raw_window_s - static_cast<double>(excluded_ns) / 1e9;
     double mps = elapsed > 0 ? workload.size() / elapsed / 1e6 : 0.0;
+
+    // Anti-cheat: the audit-probe wall time is excluded from throughput so an
+    // honest engine isn't charged for the harness's book inspections. That
+    // exclusion must not become a place to hide matcher work: an engine that
+    // buffers in engine_on_* and matches lazily inside engine_query_* would push
+    // most of its cost into the excluded window and post an inflated number.
+    // Honest probes are a negligible slice of the run; a large excluded fraction
+    // is the signature of matcher work laundered out of the clock, and gates the
+    // run INVALID (mirrors the prebuild-time bound; see docs/ANTI_CHEAT.md).
+    constexpr double PROBE_WARN_FRAC = 0.05;
+    constexpr double PROBE_FAIL_FRAC = 0.25;
+    const double excluded_frac = raw_window_s > 0.0
+        ? (static_cast<double>(excluded_ns) / 1e9) / raw_window_s : 0.0;
+    const bool probe_time_ok = (excluded_frac <= PROBE_FAIL_FRAC);
+    if (excluded_frac > PROBE_WARN_FRAC)
+        std::printf("  Anti-cheat: audit probes consumed %.1f%% of the timed "
+                    "window%s\n", excluded_frac * 100.0,
+                    probe_time_ok ? " (flagged)"
+                                  : " — INVALID: matcher work hidden in engine_query_*");
 
     // Prebuild-time bound (engines exporting engine_prebuild only). Translation
     // is a small fraction of matching, so an honest prebuild runs well under the
@@ -578,7 +641,8 @@ int main(int argc, char** argv) {
     std::string expected, status;
     const std::string hash_path = "reference/correctness_hash.txt";
     const std::string want_tag =
-        scenario + "_seed" + std::to_string(seed) + "_reports.txt";
+        scenario + "_seed" + std::to_string(seed) +
+        "_count" + std::to_string(count) + "_reports.txt";
 
     // The hash file is one `<sha256>  <tag>` line per (scenario, seed). Each
     // call reads the existing entries into a map so the file accumulates
@@ -608,7 +672,8 @@ int main(int argc, char** argv) {
         mkdir("reference", 0755);
         // canonical_output.txt is the canonical published dump. Don't clobber
         // it on a non-canonical write; capture a per-scenario copy instead.
-        const bool is_canonical = (scenario == "normal" && seed == 23ULL);
+        const bool is_canonical =
+            (scenario == "normal" && seed == 23ULL && count == 1000000ULL);
         const std::string out_path = is_canonical
             ? std::string("reference/canonical_output.txt")
             : std::string("reference/canonical_output_") + scenario + ".txt";
@@ -701,7 +766,7 @@ int main(int argc, char** argv) {
     bool report_buffer_ok = (drain.collected.capacity() == collected_cap0);
     bool valid          = correctness_ok && audit_ok && affinity_ok
                           && prestart_book_empty && prebuild_time_ok
-                          && report_buffer_ok;
+                          && report_buffer_ok && probe_time_ok;
 
     // --- report -------------------------------------------------------------
     std::printf("  Messages processed: %zu\n", workload.size());
@@ -778,8 +843,14 @@ int main(int argc, char** argv) {
     std::time_t now = std::time(nullptr);
     std::tm tmv;
     std::strftime(ts, sizeof(ts), "%Y%m%dT%H%M%S", localtime_r(&now, &tmv));
+    // Filename must be unique per run: include the seed and pid, not just a
+    // 1-second timestamp — otherwise concurrent same-(engine,scenario,mode)
+    // runs (e.g. a multi-seed consensus sweep) overwrite each other's JSON and
+    // a reader can pick up a different seed's result.
     std::string result_path = "results/" + engine_name + "_" + scenario + "_" +
-                              mode_name + "_" + ts + ".json";
+                              mode_name + "_s" + std::to_string(seed) + "_" + ts +
+                              "_p" + std::to_string(getpid()) + ".json";
+    const int smt_same = cores_same_physical(matcher_core, drainer_core);
     FILE* jf = std::fopen(result_path.c_str(), "wb");
     if (jf) {
         std::fprintf(jf,
@@ -801,7 +872,8 @@ int main(int argc, char** argv) {
             "  \"audit\": {\"ran\": %s, \"passed\": %s, \"checks\": %d, "
             "\"mismatches\": %d, \"baseline\": \"%s\", \"verify_seed\": %llu, "
             "\"note\": \"%s\"},\n"
-            "  \"affinity\": {\"matcher\": %s, \"drainer\": %s},\n"
+            "  \"affinity\": {\"matcher\": %s, \"drainer\": %s, "
+            "\"matcher_core\": %d, \"drainer_core\": %d, \"same_physical_core\": %s},\n"
             "  \"verdict\": \"%s\",\n"
             "  \"platform\": %s\n"
             "}\n",
@@ -819,6 +891,8 @@ int main(int argc, char** argv) {
             (unsigned long long)audit.verify_seed, audit.note.c_str(),
             matcher_pinned  ? "true" : "false",
             drainer_pinned  ? "true" : "false",
+            matcher_core, drainer_core,
+            smt_same == 1 ? "true" : (smt_same == 0 ? "false" : "null"),
             valid ? "VALID" : "INVALID",
             platform_fingerprint_json().c_str());
         std::fclose(jf);
