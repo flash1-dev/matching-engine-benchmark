@@ -15,8 +15,7 @@ worst-case among the 52 is **6.825 M/s**; the FlashOne reference measures **33.2
 workload. The per-row findings below carry the specifics; the filed issue for each is linked in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md). Each row is a snapshot at that engine's
 pinned commit — several have since been fixed upstream — and most are personal side projects that
-reflect their authors' own goals, **not a judgment of engineering quality**; affiliations are as the
-authors publicly state them, not independently verified.
+reflect their authors' own goals. No number or finding here ranks or judges an author's engineering quality — the harness reports what each pinned commit does. Affiliations are as the authors publicly state them, not independently verified.
 
 **‡** = authored by a professional trading-industry engineer — a **personal side project with no
 commercial intent, not their employer's work**, except where the Author column explicitly labels an
