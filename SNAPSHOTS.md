@@ -163,7 +163,6 @@ pinned third-party adapters and are omitted.
 | limitbook | solarpx/limitbook | `943eadc181d1e35a26abaa5217eeb32bf3304267` | Rust |
 | liqian | QuantTradingWithLi/high_perf_order_matching | `016a3585ac26722208d19640eb72eab25815767b` | C++ |
 | lirezap | lirezap/oms | `58786cc5470759725d92e63104f5505919ea165c` | Java |
-| lirezap_oms | lirezap/oms | `58786cc5470759725d92e63104f5505919ea165c` | — |
 | llc993 | llc-993/matching-core | `2cb21c0a67b34b01ad97e2394a649fc77e33aa8b` | Rust |
 | lll | northwesternfintech/low-latency-league | `a3f1609f3172f68d1cf8e6e1b8886ab25d41d270` | C++ |
 | lmxdawn | lmxdawn/exchange | `7d331e5013e08c122c5d498dc22375b5f74d9e6e` | Java |
@@ -273,7 +272,7 @@ pinned third-party adapters and are omitted.
 | turbo | sluggard6/turbo | `92adea51e6dd3b48d2c211d0046e5616bd5cbf8f` | Java |
 | Tzadiko | Tzadiko/Orderbook | `dd136dd219ead95796f0e396e9e1395542bf673f` | C++ |
 | vdt | vdt/matching-engine | `c75e7f2675f6bb4936313e9ae27a00b6ab8c4627` | JavaScript |
-| vega | vegaprotocol/vega | `29d7f5e667fb1ec9aff09d0600d597f78c33c8ad` | Rust |
+| vega | vegaprotocol/vega | `29d7f5e667fb1ec9aff09d0600d597f78c33c8ad` | Go |
 | viabtc | viabtc/viabtc_exchange_server | `2289c53f7d181b6c4ede1bd82edac6e1386d8434` | C |
 | vinci217 | vinci-217/trading-system | `42bbf478ab89cdf43b8720a81698e46760240b38` | — |
 | vincurious | vincurious/ordermatchingengine | `e244231d90b2a44828167bf7a23d06a693e3a6e1` | — |

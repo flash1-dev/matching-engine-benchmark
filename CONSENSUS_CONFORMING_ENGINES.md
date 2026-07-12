@@ -2,11 +2,11 @@
 
 Companion to [`README.md`](README.md) (which shows the top 10 by worst-case throughput). A one-line finding and the filed-issue link per engine are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) (the linked issue carries the full mechanism and patch); the pre-run conformance gate is in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-These **160** engines (110 of them with our suggested fix) reproduce the byte-identical consensus on both the report stream and the book state across 100 random workload seeds — **1 billion+ order messages** each — and pass the pre-run conformance gate. **as shipped** = conforms unmodified with no known correctness defect. **with fix** = reproduces the consensus after the minimal documented patch — whether the defect diverges the canonical workload or is *latent* (reachable only off-workload or through the book-state audit); the filed issue carries the patch. The table spans every common book architecture and 16 source languages (the full 246-engine survey spans 20+).
+These **160** engines (110 of them with our suggested fix) reproduce the byte-identical consensus on both the report stream and the book state across 100 random workload seeds — **1 billion+ order messages** each — and pass the pre-run conformance gate. **as shipped** = conforms unmodified with no known correctness defect. **with fix** = reproduces the consensus after the minimal documented patch — whether the defect diverges the canonical workload or is *latent* (reachable only off-workload or through the book-state audit); the filed issue carries the patch. The table spans every common book architecture and 16 source languages (the full 247-engine survey spans 20+). Every row describes the engine at its pinned commit in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, **not a judgment of current code or engineering quality**.
 
 The **Worst-case M/s** column is each engine's lowest throughput across the five scenarios (weakest regime, seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`), measured **in isolation on clean cores** at the median of 10 trials. A parenthesised scenario names the weakest regime where recorded; the broader survey rows give the worst-of-five as a single figure.
 
-**‡** = authored by a professional trading-industry engineer — a **personal side project, not an official repository of their employer**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+**‡** = authored by a professional trading-industry engineer — a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition — shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:--|:--|:--|--:|:--|:--|
@@ -17,10 +17,10 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
 | raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
-| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | flat-array book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
+| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
 | matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
 | chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
-| yashkukrecha ‡ | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak (clean; fastest pro-wave conformer); author: incoming engineer at Jump Trading |
+| yashkukrecha ‡ | C++ | as shipped | 6.26 (normal) | — | two priority_queues + timestamp FIFO tiebreak (clean; fastest pro-wave conformer); author: incoming at Jump Trading |
 | lobsim | C++ | as shipped | 6.07 | — | flat_hash_map + Boost intrusive list + max-heaps |
 | asthamishra | Rust | with fix | 5.60 (flash-crash) | — | bounds-check the tick array — no dropped orders above the ceiling [#1](https://github.com/AsthaMishra/matching-engine/issues/1) |
 | llc993 (154★) | Rust | as shipped | 5.43 (swing-40) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
@@ -30,7 +30,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | hroptatyr/clob | C | as shipped | 4.73 (normal) | ~6M/s | b+tree CLOB, `_Decimal64` (no patch) |
 | onewhitedevil | C++ | with fix | 4.73 | — | MIT; cancel never frees slab slot → bad_alloc [#1](https://github.com/1WHITE-DEVIL/lob-matching-engine/issues/1) |
 | slmolenaar (264★) | C++ | with fix | 4.50 | — | CancelOrder swap-and-pop FIFO fix [#3](https://github.com/SLMolenaar/orderbook-simulator-cpp/issues/3) |
-| forever803 | C++ | as shipped | 4.33 | — | no-license; conforming; demo-scaffolding only |
+| forever803 | C++ | as shipped | 4.33 | — | no-license; conforming; the matcher ships inside a demo/example harness |
 | ranjan2829 (131★) | C++ | with fix | 4.07 | — | 4 memory-safety defects fix [#3](https://github.com/ranjan2829/High-Frequency-Trading-Exchange-Engine/issues/3) |
 | mercury | C++ | as shipped | 3.94 (normal) | 3.2M/s | abseil b-tree |
 | rust_ob | Rust | with fix | 3.73 (static) | — | Decimal::MAX sentinel overflows rust_decimal → panic; unreachable through harness [#1](https://github.com/toyota-corolla0/rust_ob/issues/1) |
@@ -55,7 +55,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | geseq | Go | as shipped | 1.81 (swing-25) | 12.5–21M/s | a multi-level cross-through is fixed upstream — `RESOLVED_FINDINGS.md` [#25](https://github.com/geseq/orderbook/issues/25) |
 | gocronx (84★) | Rust | as shipped | 1.77 (static) | ~17M/s |  |
 | robdev ‡ | Rust | with fix | 1.76 (static) | — | clear the emptied price level on cancel, return the real cancel result, and kill the IOC residual — all latent as-shipped (match path immune; the stale best_price is caught by the gate's state audit) [#1](https://github.com/rob-DEV/match-engine/issues/1); author: a CME Group engineer |
-| stocksharp (10236★) ‡ | C# | with fix | 1.64 (swing-25) | — | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); fixed; author: StockSharp / trading-tech vendor; [#681](https://github.com/StockSharp/StockSharp/issues/681) |
+| stocksharp (10236★) ‡ | C# | with fix | 1.64 (swing-25) | — | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; author: StockSharp / trading-tech vendor; [#681](https://github.com/StockSharp/StockSharp/issues/681) |
 | apex | Rust | with fix | 1.62 (static) | — | execute at the maker price, not the aggressor's limit [#3](https://github.com/crypto-zero/apex-engine/issues/3) |
 | kartikeya | C++ | with fix | 1.61 | — | OrderIndex::erase backward-shift corruption fix [#1](https://github.com/Kartikeya2710/order-matching-engine/issues/1) |
 | matchina ‡ | Rust | with fix | 1.60 (static) | — | taker-exhaustion guard — no phantom zero-quantity trades; fixed upstream — `RESOLVED_FINDINGS.md`; author: at GSR (crypto market maker) [#3](https://github.com/fran0x/matchina/issues/3) |
@@ -70,7 +70,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | loom | Rust | with fix | 1.39 (static) | — | check FOK fillability against total reachable quantity, not one maker at a time — a multi-maker-fillable FOK fills [#1](https://github.com/AlphaGodzilla/loom/issues/1) |
 | jiang | Java | with fix | 1.30 (swing-25) | — | 1-line `idMaps.remove(id)` so modify doesn't drop the order [#3](https://github.com/JiangYongKang/FastMatchingEngine/issues/3) |
 | sadhbh | C++ | with fix | 1.28 (static) | — | C++20 coroutines; exact-touch crossing + empty-book deref guard [#6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6) |
-| koral ‡ | C++ | as shipped | 1.255 (normal) | — | FIX exchange (clean; thread-affinity plumbing only); author: a Coinbase engineer |
+| koral ‡ | C++ | as shipped | 1.255 (normal) | — | FIX exchange (clean; thread-affinity plumbing only); author: a Coinbase software-engineering intern |
 | magenta_mice | C++ | as shipped | 1.17 | — | std::map price → deque per side, native FAK/IOC |
 | limitbook | Rust | with fix | 1.16 (static) | ~30 M/s | partial-fill write-back — decrement the resting maker [#1](https://github.com/solarpx/limitbook/issues/1) |
 | m5487 | Go | as shipped | 1.15 (swing-25) | ~2.6M/s | skiplist + disruptor |
@@ -83,9 +83,9 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | kodoh (76★) | C++ | with fix | 0.95 | — | crossing fills at maker price fix [#17](https://github.com/Kodoh/Orderbook/issues/17) |
 | trusted ‡ | Rust | with fix | 0.925 (static) | — | latent bid-side market-order double-subtract underflow [#9](https://github.com/JunbeomL22/trusted/issues/9); author: a KRX market-maker at IBK Securities |
 | ffhan | Go | with fix | 0.89 | — | Cancel soft-flag fix [#4](https://github.com/ffhan/tome/issues/4) |
-| kennethzhang ‡ | C++ | with fix | 0.86 (static) | — | price the limit-vs-limit cross at the resting maker, not the taker (the adapter normalizes it today) [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1); author: a Squarepoint engineer |
+| kennethzhang ‡ | C++ | with fix | 0.86 (static) | — | price the limit-vs-limit cross at the resting maker, not the taker (the adapter normalizes it today) [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1); author: a Squarepoint quant researcher |
 | javalob ‡ | Java | as shipped | 0.86 (swing-40) | — | teaching LOB (clean); author: Ash Booth (JPMorgan) |
-| swirly ‡ | Java | as shipped | 0.79 (swing-40) | — | clean — native revise changes only lots, so modify = cancel+reinsert per contract; author: a Voltaire engineer |
+| swirly ‡ | Java | as shipped | 0.79 (swing-40) | — | clean — native revise changes only lots, so modify = cancel+reinsert per contract; author: a trading-systems developer; co-founder of Reactive Markets |
 | i25959341 (550★) | Go | with fix | 0.72 (swing-25) | >300k/s | per-side Volume() correct after a partial fill |
 | jlob | Java/JNI | as shipped | 0.71 (static) | ~127 ns/op | L3 RB-tree, working JNI adapter |
 | vdt | JavaScript | with fix | 0.71 | — | MIT; assert never imported → ReferenceError on side guard |
@@ -119,7 +119,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | lightning (754liam) | C++ | with fix | 0.22 (static) | — | matchAskLimit prices fills at aggressor's limit; maker-price fix [#1](https://github.com/754liam/Lightning/issues/1) |
 | mkhoshkam | Go | with fix | 0.18 | — | heap Less ignores seq → FIFO fix (adapter) [#10](https://github.com/mkhoshkam/orderbook/issues/10) |
 | rakuzen25 ‡ | C++ | with fix | 0.18 (flash-crash) | — | within-level FIFO fix (swap-with-last broke arrival order); uint16 ceiling residual; issues disabled upstream; author: an Optiver intern |
-| sculd ‡ | Python | with fix | 0.18 (swing-25) | — | guard unknown-id cancel/status against KeyError and skip cancelled heads in _get_best_price — latent as-shipped (matching path unaffected) [#1](https://github.com/sculd/orderbook_practice_python/issues/1); author: a Two Sigma engineer |
+| sculd ‡ | Python | with fix | 0.18 (swing-25) | — | guard unknown-id cancel/status against KeyError and skip cancelled heads in _get_best_price — latent as-shipped (matching path unaffected) [#1](https://github.com/sculd/orderbook_practice_python/issues/1); author: a quant/developer who has worked at Two Sigma |
 | trademacher ‡ | Java/JNI | as shipped | 0.15 (swing-25) | ~5M/s | TradeMatcher's own matching engine (trading-tech vendor) |
 | OrderBook-rs (477★) ‡ | Rust | with fix | 0.13 (static) | latency-focused | partial-fill maker keeps FIFO priority (push_front, not re-queue to tail); fixed upstream — `RESOLVED_FINDINGS.md`; author: a quant developer at Capital Delta [#88](https://github.com/joaquinbejar/OrderBook-rs/issues/88) |
 | lirezap | Java | with fix | ~1.2–1.6 (0.11 static) | — | ISC; FOK fills only best level, kills multi-level FOK [#1](https://github.com/lirezap/OMS/issues/1) |
@@ -131,7 +131,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | qa-rs ‡ | Rust | with fix | 0.09 (static) | — | OrderQueue lazy-deletion — same-id reinsert leaves a stale heap entry [#1](https://github.com/yutiansut/qa-rs/issues/1), `get_depth` over-counts a plain cancel until swept [#2](https://github.com/yutiansut/qa-rs/issues/2); + 5 latent `Orderbook` match-loop bugs off the limit-only workload: 1000-id recycle drops orders [#3](https://github.com/yutiansut/qa-rs/issues/3), market remainder rested not killed [#4](https://github.com/yutiansut/qa-rs/issues/4), amend skips the crossing check [#5](https://github.com/yutiansut/qa-rs/issues/5), NaN price passes validation [#6](https://github.com/yutiansut/qa-rs/issues/6), per-order sweep recursion overflows the stack [#7](https://github.com/yutiansut/qa-rs/issues/7); author: a private-fund manager (Shanghai Binghao) |
 | matchingo | Go | with fix | 0.08 (static) | — | UpdateVolume subtracts the consumed qty, not the remainder (depth audit); fixed upstream — `RESOLVED_FINDINGS.md` [#1](https://github.com/GOnevo/matchingo/issues/1) |
 | php_matcher | PHP | with fix | 0.08 | — | no-license; key price levels by the integer tick so distinct sub-integer prices don't merge; issues disabled — unfileable |
-| vega ‡ | Rust | as shipped | 0.08 (static) | — | accessor-only; author: Barney Mannerings (designed a London Stock Exchange matcher; Vega Protocol) |
+| vega ‡ | Go | as shipped | 0.08 (static) | — | accessor-only; author: Barney Mannerings (designed a London Stock Exchange matcher; Vega Protocol) |
 | pantelwar (75★) | Go | with fix | 0.07 (static) | — | remove hot-path debug logging + fix the MarshalJSON sell-side bug [#26](https://github.com/Pantelwar/matching-engine/issues/26) |
 | bexchange | Go | with fix | 0.07 | — | fill loop drops partial makers / phantom fills; dup of [#2](https://github.com/bhomnick/bexchange/issues/2) |
 | lobrs | Rust | with fix | 0.07 | — | after cancel empties best level, best left None, never recomputed [#1](https://github.com/rafalpiotrowski/lob-rs/issues/1) |
@@ -153,7 +153,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | mkxzy | Java | as shipped | 0.02 (static) | — | clean; no license |
 | auralshin | Rust | as shipped | 0.01 (static) | — |  |
 | zorrofix ‡ | C++ | with fix | 0.01 (static) | — | sweep loop never checks whether the aggressor has closed → execute(0)→NAN→abort [#12](https://github.com/dsec-capital/zorro-fix/issues/12); DSEC Capital's own repo (org bio: 'Algo Trading Tech Shop') |
-| ghosh (677★) ‡ | C++ | with fix | very slow | — | MIT; flat 256-slot price index shared by both sides had no collision handling → cross-side bucket merge crash; + a 1,048,576 order-id cap; both fixed; author: HFT practitioner / Packt author; [#9](https://github.com/PacktPublishing/Building-Low-Latency-Applications-with-CPP/issues/9) |
+| ghosh (677★) ‡ | C++ | with fix | very slow | — | MIT; flat 256-slot price index shared by both sides had no collision handling → cross-side bucket merge crash; + a 1,048,576 order-id cap; both fixed; author: a low-latency trading-systems developer and Packt author; [#9](https://github.com/PacktPublishing/Building-Low-Latency-Applications-with-CPP/issues/9) |
 | cspooner | Rust | with fix | very slow (static) | — | conserve quantity on a partial fill (+ 4 related fixes) [#14](https://github.com/christian-spooner/trading-server/issues/14) |
 | pgellert (65★) | Rust | with fix | very slow (swing-40) | — | don't drop the popped order + correct the stale price-bounds [#2](https://github.com/pgellert/matching-engine/issues/2) |
 | mansoor (64★) | C++ | with fix | very slow (normal) | >20 M/s | bounds-check the price array — no OOB on wide swings [#3](https://github.com/mansoor-mamnoon/limit-order-book/issues/3) |
@@ -165,7 +165,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | techieboy (58★) | Rust | with fix | very slow (swing-25) | ~10 µs/match | 2 fixes: spurious zero-qty fills + stale best-bid/ask [#1](https://github.com/TechieBoy/rust-orderbook/issues/1) |
 | lightning (68★) | Go | with fix | very slow (static) | — | skiplist multi-level predecessor fix — no lost resting orders |
 | ridulfo (69★) | Python | with fix | very slow (static) | ~400k/s | consistent total order in __lt__ — no priority inversion / lost cancels [#10](https://github.com/ridulfo/order-matching-engine/issues/10) |
-| khrapovs ‡ | Python | with fix | very slow (pure Python) | — | MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25); author: an ML engineer at ING (bank) |
+| khrapovs ‡ | Python | with fix | very slow (pure Python) | — | MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25); author: a senior ML engineer at ING (bank) |
 | dabrowdev | TypeScript | as shipped | very slow (static) | — | MIT; O(n²) cancel/sweep, OrderQueue.remove reindexes level; Codeberg — filing TODO |
 | ms_engine | TypeScript | with fix | very slow | — | don't rest a no-liquidity market order's remainder at sentinel −1 (market-order path only, off the limit-only workload) |
 | lsamber | Java | with fix | very slow | — | stable same-price FIFO ordering so a LocalDateTime.now() collision can't reorder the PriorityQueue [#1](https://github.com/LS-Amber/financial-trading-system/issues/1) |

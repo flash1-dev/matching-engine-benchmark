@@ -10,15 +10,15 @@ duplicates; to request coverage of an engine, contact contact@flash1.com.
 
 ## Results
 
-The harness has been run against **246 distinct matching engines** — every common FIFO book
+The harness has been run against **247 distinct matching engines** — every common FIFO book
 architecture, 20+ source languages. **160 reproduce the byte-identical consensus** (110 of
 them after a documented fix) and are listed in
-[`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **86**
+[`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **87**
 diverge, cannot finish their slowest scenario within the message budget, or crash
 ([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
 
 The consensus oracle is also a bug-finder: the sweep surfaced **more than 267 distinct
-correctness bugs across 199 of the 246 engines**, and **over 172 GitHub issues have been
+correctness bugs across 199 of the 247 engines**, and **over 172 GitHub issues have been
 filed upstream** — several already fixed by their maintainers
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition, per-engine verdicts,
 and one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the
@@ -28,9 +28,11 @@ industry-authored subset is broken out in
 The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
 FlashOne is the harness publisher's algorithm, shown as a reference; it stands as a target to
-beat on fully public, audited work.
+beat on fully public, audited work. Every verdict in these rosters describes each engine **at its
+pinned commit** in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, not a claim about a
+project's current code or its authors' engineering quality.
 
-**‡** = authored by a professional trading-industry engineer — a **personal side project, not an official repository of their employer**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+**‡** = authored by a professional trading-industry engineer — a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition — shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
@@ -41,12 +43,35 @@ beat on fully public, audited work.
 | CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
 | raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
-| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | flat-array book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
+| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
 | matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
 | chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
 
 See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of
 all **160** conforming engines.
+
+### Throughput by book structure
+
+Every conforming engine, classified by the data structure it uses to order price levels — the core
+algorithmic choice in a FIFO matcher. The figure is the best worst-case throughput any engine reached
+with that structure: an upper bound, since language and implementation confound a pure structural
+comparison (every leader is C, C++, or Rust).
+
+| Book structure (price ladder) | Fastest engine | Lang | Worst-case M/s | Engines | Notes |
+|:--|:--|:--|--:|--:|:--|
+| PIN + Neighbor-aware trees | FlashOne | C++ | 33.20 | — | reference target; structure as disclosed in the paper |
+| Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid — price-indexed arena + heaps for best price |
+| Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice — 37% of the field (`std::map`, `TreeMap`) |
+| Sorted vector | melin | Rust | 7.86 | 16 | fast because a live book holds only ~5–20 active levels |
+| AVL tree | CppTrader | C++ | 7.26 | 5 | balanced BST (CppCommon `BinTreeAVL`) |
+| B-tree / B+tree | raymondshe | Rust | 7.20 | 27 | `BTreeMap`-per-side; the common Rust default |
+| Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | balancing barely matters at ~20 levels |
+| Flat direct-indexed array (± bitmap) | asthamishra | Rust | 5.60 | 14 | O(1) by tick, but cache-thrashes a wide domain → lands lower |
+| Adaptive-radix / crit-bit tree | serum | Rust | 2.625 | 3 | serum de-chained as native code to remove VM penalty |
+| Linked-list price levels | coralme | Java | 1.97 | 2 | price-ordered level list; O(n) level lookup |
+| Skip-list | apex | Rust | 1.62 | 8 | lock-free, but pointer-chasing hurts |
+| Hash-map of levels + best cache | dydx | Go | 0.11 | 5 | de-chained v4 memclob, accessor-only; O(1) level access, O(all levels) best-price rescan |
+| Other (splay / hash / flat list) | pantelwar | Go | 0.07 | 5 | structures outside the main families; class ceiling 0.1 M/s |
 
 ### Latency under burst load
 
@@ -145,7 +170,7 @@ every run probes the same points, so an engine cannot tell a measured run from a
 one (`docs/ANTI_CHEAT.md`). By default all five scenarios run and the engine's worst case is
 reported (`--scenario` narrows; `--compare` ranks).
 
-**Pre-run conformance gate.** Before any timed run, each engine passes a battery of **33
+**Pre-run conformance gate.** Before any timed run, each engine passes a battery of **34
 hand-crafted edge cases**, reverse-engineered from latent bugs found across the survey, plus a
 **book-state audit** (best_bid / best_ask / depth checked against the consensus) that catches
 a stale or phantom book state that self-heals before any trade and so escapes the report
@@ -158,7 +183,7 @@ conventions (`docs/CONFORMANCE.md`).
   engines (byte-identical on output and book state across 100 random seeds, **1 billion+ order
   messages** each, plus the conformance gate). **as shipped** = conforms unmodified;
   **with fix** = conforms after the minimal documented patch.
-- [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **86** whose output diverges,
+- [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **87** whose output diverges,
   or that cannot finish their worst scenario within budget. Non-conforming describes the output
   against the consensus, not engineering quality.
 - [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 52 industry-authored

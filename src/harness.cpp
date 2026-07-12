@@ -429,6 +429,44 @@ int main(int argc, char** argv) {
     install_guards();
     std::thread drainer(drainer_main, &drain);
 
+    // Anti-cheat: snapshot the correctness-hash reference INTO MEMORY now,
+    // before the engine is loaded and initialized (let alone run). The prior
+    // structure re-read reference/correctness_hash.txt from disk at verdict
+    // time, after eng.init/the timed run/eng.shutdown had all completed — by
+    // which point an untrusted engine has had the whole run to overwrite the
+    // file with a value matching its own (possibly wrong) output and forge a
+    // PASS. The verdict later in this function is computed against this
+    // pre-run snapshot, not whatever the file contains by the time the run
+    // finishes.
+    const std::string hash_path = "reference/correctness_hash.txt";
+    const std::string want_tag =
+        scenario + "_seed" + std::to_string(seed) +
+        "_count" + std::to_string(count) + "_reports.txt";
+    // The hash file is one `<sha256>  <tag>` line per (scenario, seed). Each
+    // call reads the existing entries into a map so the file accumulates
+    // across scenarios — and a single line is still a valid file.
+    auto read_hash_file = [&hash_path]() {
+        std::map<std::string, std::string> out;
+        FILE* fp = std::fopen(hash_path.c_str(), "rb");
+        if (!fp) return out;
+        // Read line by line (fgets, not fscanf) so an over-long or malformed
+        // token cannot desync the stream and hide later valid entries, and
+        // accept an entry only when the hash is exactly 64 lowercase hex chars.
+        char line[512];
+        while (std::fgets(line, sizeof(line), fp)) {
+            char h[256], t[256];
+            if (std::sscanf(line, "%255s %255s", h, t) != 2) continue;
+            std::string hash(h);
+            if (hash.size() != 64 ||
+                hash.find_first_not_of("0123456789abcdef") != std::string::npos)
+                continue;
+            out[t] = hash;
+        }
+        std::fclose(fp);
+        return out;
+    };
+    const std::map<std::string, std::string> pre_read_hash_entries = read_hash_file();
+
     // --- run ----------------------------------------------------------------
     bool matcher_pinned = pin_to_core(matcher_core);
     // Anti-cheat: engine_init receives a per-run random nonce, NOT the workload
@@ -446,6 +484,19 @@ int main(int argc, char** argv) {
     // promises a hang is reported as failed, not just a crash.)
     alarm(RUN_TIMEOUT_S);
     eng.init(init_nonce, transport, queue);
+    // Anti-cheat: re-install the fatal-signal guards immediately after
+    // engine_init returns. An engine could call sigaction() inside
+    // engine_init to disarm SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGALRM (the last of
+    // which would also defeat the watchdog) and swallow what should be a
+    // fatal crash instead of letting the harness see it and report the run as
+    // failed. Re-asserting here closes that window for engine_init
+    // specifically. RESIDUAL: an engine that waits and re-disarms the guards
+    // from inside engine_on_*/engine_flush/engine_query_* can still race the
+    // timed loop — closing that fully would mean running the engine in an
+    // isolated child process and owning the verdict from a parent that never
+    // runs engine code, which is a larger rearchitecture than this fix
+    // attempts (see docs/ANTI_CHEAT.md).
+    install_guards();
     int threads_after_init = current_thread_count();
 
     // Pre-build the engine ABI struct for every message — before the timed
@@ -637,36 +688,10 @@ int main(int argc, char** argv) {
     const bool prebuild_time_ok = (prebuild_ratio <= PREBUILD_FAIL_RATIO);
 
     // --- correctness --------------------------------------------------------
+    // hash_path / want_tag / read_hash_file / pre_read_hash_entries were
+    // captured before eng.init (see above) — the anti-cheat pre-read.
     std::string computed = compute_canonical_hash(drain.collected);
     std::string expected, status;
-    const std::string hash_path = "reference/correctness_hash.txt";
-    const std::string want_tag =
-        scenario + "_seed" + std::to_string(seed) +
-        "_count" + std::to_string(count) + "_reports.txt";
-
-    // The hash file is one `<sha256>  <tag>` line per (scenario, seed). Each
-    // call reads the existing entries into a map so the file accumulates
-    // across scenarios — and a single line is still a valid file.
-    auto read_hash_file = [&hash_path]() {
-        std::map<std::string, std::string> out;
-        FILE* fp = std::fopen(hash_path.c_str(), "rb");
-        if (!fp) return out;
-        // Read line by line (fgets, not fscanf) so an over-long or malformed
-        // token cannot desync the stream and hide later valid entries, and
-        // accept an entry only when the hash is exactly 64 lowercase hex chars.
-        char line[512];
-        while (std::fgets(line, sizeof(line), fp)) {
-            char h[256], t[256];
-            if (std::sscanf(line, "%255s %255s", h, t) != 2) continue;
-            std::string hash(h);
-            if (hash.size() != 64 ||
-                hash.find_first_not_of("0123456789abcdef") != std::string::npos)
-                continue;
-            out[t] = hash;
-        }
-        std::fclose(fp);
-        return out;
-    };
 
     if (write_reference) {
         mkdir("reference", 0755);
@@ -709,17 +734,20 @@ int main(int argc, char** argv) {
                          tmp_path.c_str(), std::strerror(errno));
         }
         status = "REFERENCE WRITTEN";
-    } else if (file_exists(hash_path.c_str())) {
-        auto entries = read_hash_file();
-        auto it = entries.find(want_tag);
-        if (it == entries.end()) {
+    } else {
+        // Anti-cheat: verify against pre_read_hash_entries — the snapshot
+        // read into memory before the engine was even loaded (see above) —
+        // NOT whatever reference/correctness_hash.txt contains now, after
+        // the engine has run and had every opportunity to overwrite it. A
+        // missing pre-run entry (file absent, or this tag not in it) and a
+        // missing file collapse to the same "NO REFERENCE" outcome as before.
+        auto it = pre_read_hash_entries.find(want_tag);
+        if (it == pre_read_hash_entries.end()) {
             status = "NO REFERENCE";
         } else {
             expected = it->second;
             status = (expected == computed) ? "PASS" : "FAIL";
         }
-    } else {
-        status = "NO REFERENCE";
     }
 
     // --- anti-cheat: random-point order-book state audit (audit mode only) --
@@ -862,6 +890,8 @@ int main(int argc, char** argv) {
             "  \"messages\": %zu,\n"
             "  \"wall_time_s\": %.6f,\n"
             "  \"throughput_msgs_per_s\": %.0f,\n"
+            "  \"prebuild_ratio\": %.6f,\n"
+            "  \"excluded_frac\": %.6f,\n"
             "  \"reports\": {\"order_ack\": %llu, \"trade\": %llu, "
             "\"cancel_ack\": %llu, \"modify_ack\": %llu, "
             "\"cancel_reject\": %llu, \"modify_reject\": %llu},\n"
@@ -880,6 +910,8 @@ int main(int argc, char** argv) {
             engine_name.c_str(), scenario.c_str(), mode_name,
             (unsigned long long)seed, workload.size(), elapsed,
             mode == Mode::PERF ? mps * 1e6 : 0.0,
+            prebuild_ratio,
+            excluded_frac,
             (unsigned long long)drain.order_acks,
             (unsigned long long)drain.trades,
             (unsigned long long)drain.cancel_acks, (unsigned long long)drain.modify_acks,

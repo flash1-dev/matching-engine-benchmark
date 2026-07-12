@@ -58,6 +58,17 @@ AUDIT_POINTS = 64  # matches the harness AUDIT_POINTS; a case with <= this many
 BASELINES = {"cpp_orderbook":  "./cpp_orderbook_adapter.so",
              "llc993":         "./llc993_adapter.so",
              "hroptatyr_clob": "./hroptatyr_clob_adapter.so"}
+# The harness's OWN --mode audit state-audit baselines (see harness.cpp): for
+# any engine under test other than liquibook itself, run_audit()'s ./harness
+# --mode audit call runs its book-state probe against liquibook_adapter.so
+# (quantcup_adapter.so if the engine under test IS liquibook). Required
+# unconditionally before trusting any state_gated flag — cached or freshly
+# computed — because when these are absent the harness doesn't error, it just
+# prints "State audit: SKIPPED" and run_audit() returns None: state_gated
+# silently goes False (or, worse, a STALE cache computed while they existed
+# keeps claiming cases were gated when this session audited none of them; see
+# _oracle_sig below).
+STATE_AUDIT_BASELINES = ["./liquibook_adapter.so", "./quantcup_adapter.so"]
 BUY, SELL = 0, 1
 
 # message constructors -> (type, side, ioc, qty, order_id, price_ticks)
@@ -247,6 +258,26 @@ EDGE_CASES = {
     # alone at 99 where the SELL@100 never reaches, so no report depends on how the
     # reprice re-orders the queue (the convention axis the gate deliberately excludes).
     "modify_shared_level_sibling_survives": [NEW(1,BUY,10,100),NEW(2,BUY,10,100),MODIFY(1,BUY,10,99),NEW(3,SELL,10,100,ioc=1)],
+
+    # ---- reverse-engineered from a latent modify defect (2026-07-12) ----
+    # a crossing MODIFY must fill at the RESTING MAKER'S price, never at its
+    # own (new) limit -- both directions. modify_into_cross (above) reprices
+    # the modified order to EXACTLY the resting maker's price, so "filled at
+    # the maker's price" and "filled at the modifying order's own new limit"
+    # are the same number there and a mis-priced fill is invisible to that
+    # case. Here the modify-limit is made STRICTLY BETTER than the resting
+    # maker's price, so the two are different numbers and a bug prints a
+    # different, checkable price: a resting BUY repriced UP past a resting
+    # SELL (to 105, past the SELL's 100), and — mirrored — a resting SELL
+    # repriced DOWN past a resting BUY (to 95, past the BUY's 100), must both
+    # trade at the UNTOUCHED counterparty's (maker's) price, not at the
+    # modified order's own more-aggressive new limit (modify-fills-at-own-
+    # limit -- the modify-path sibling of taker_price_both_directions, which
+    # tests the same rule for a plain NEW aggressor).
+    "modify_into_cross_price_improvement": [
+        NEW(1,SELL,10,100), NEW(2,BUY,10,90),  MODIFY(2,BUY,10,105),
+        NEW(3,BUY,10,200),  NEW(4,SELL,10,210),MODIFY(4,SELL,10,195),
+    ],
 }
 
 def scen_name(case): return "ec-" + case.replace("_", "-")
@@ -296,9 +327,11 @@ def run_audit(so, scen, count):
             return {"PASS": True, "FAIL": False}.get(m.group(1))
     return None
 
+def _so_exists(p):
+    return os.path.exists(p if os.path.isabs(p) else os.path.join(REPO, p))
+
 def _require_so(paths, what):
-    missing = [p for p in paths
-               if not os.path.exists(p if os.path.isabs(p) else os.path.join(REPO, p))]
+    missing = [p for p in paths if not _so_exists(p)]
     if missing:
         sys.exit(f"ERROR: {what} not found: {missing}. The gate cannot form a "
                  f"consensus without them — build the three oracle adapters "
@@ -310,12 +343,25 @@ def _oracle_sig():
     # Binds the cache to the exact case set + oracle baselines it was computed
     # for, so a stale cache (e.g. from an earlier session, after `make clean`
     # deleted the .bin files) is rejected rather than trusted (finding I).
+    # Also binds it to whether the harness's own state-audit baselines
+    # (liquibook / quantcup) were present: state_gated was computed by
+    # actually running those audits (see run_audit/STATE_AUDIT_BASELINES
+    # above), so a cache built while they existed must not be trusted once
+    # they've been removed — their audits would now silently SKIP, and the
+    # cached state_gated=True flags would misreport "book state on N cases"
+    # for a session that actually ran zero state audits.
+    state_audit_present = tuple(_so_exists(p) for p in STATE_AUDIT_BASELINES)
     return hashlib.sha256(
-        (repr(sorted(EDGE_CASES.items())) + repr(sorted(BASELINES.items()))).encode()
+        (repr(sorted(EDGE_CASES.items())) + repr(sorted(BASELINES.items()))
+         + repr(state_audit_present)).encode()
     ).hexdigest()
 
 def consensus(write_bins=True):
     _require_so(BASELINES.values(), "oracle baseline adapter(s)")
+    _require_so(STATE_AUDIT_BASELINES, "state-audit baseline adapter(s) "
+                "(harness --mode audit needs these to gate the book-state "
+                "dimension; without them every case silently falls back to "
+                "report-hash-only checking)")
     """Write each case's .bin, compute the oracle (report-stream hash + book-state
     audit consensus), cache it, and return {case: (scen, count, hash_or_None,
     per_oracle, state_gated)}."""
@@ -385,6 +431,15 @@ def main():
         return
     so = sys.argv[1]
     _require_so([so], "engine .so")
+    # Required unconditionally, BEFORE the cache short-circuit below: a cached
+    # oracle (load_oracle()) never calls consensus(), so without this the
+    # state-audit-baselines check inside consensus() would simply never run
+    # for a cache-hit invocation, and a stale cache's state_gated flags (see
+    # _oracle_sig) would be trusted even with liquibook/quantcup absent.
+    _require_so(STATE_AUDIT_BASELINES, "state-audit baseline adapter(s) "
+                "(harness --mode audit needs these to gate the book-state "
+                "dimension; without them every case silently falls back to "
+                "report-hash-only checking)")
     # Reuse a cached oracle (built by a prior `--consensus` run) so a parallel
     # sweep neither re-runs the baselines nor rewrites the .bin files under each
     # other; fall back to computing inline for a standalone single-engine check.

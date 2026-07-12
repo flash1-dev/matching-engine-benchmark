@@ -199,8 +199,18 @@ was measured on.
 ## Defensive execution
 
 Engine calls run under `SIGSEGV` / `SIGABRT` / `SIGBUS` / `SIGFPE` handlers and
-an `alarm()` watchdog. An engine that crashes or hangs is reported as failed
-rather than taking the harness down with it.
+an `alarm()` watchdog, re-installed immediately after `engine_init` so an engine
+cannot quietly disarm them during setup. An engine that crashes or hangs is
+reported as failed rather than taking the harness down with it.
+
+These guards catch an engine that *accidentally* crashes or hangs — they are not
+a sandbox. The engine is loaded in-process and shares the harness's address space
+and signal table, so an engine that set out to cheat could re-disarm the handlers
+from inside its own `engine_on_*` / `engine_query_*` calls and launder a crash or
+hang. That is the same cooperative-trust boundary described under *What the harness
+does not police* below: the harness closes the accidental and the easy cases and
+makes every result a reproducible claim (host fingerprint + recorded seed), rather
+than standing as a security boundary against a hostile binary.
 
 ## What the harness does not police
 

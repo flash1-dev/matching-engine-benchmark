@@ -33,9 +33,9 @@ the consensus: (1) its **report-stream hash**, and (2) its **book-state audit** 
 the `engine_query_best_bid` / `best_ask` / `depth_at` answers it gives at each
 probe (see *The book-state audit* below).
 
-The battery is **33 hand-crafted cases**, reverse-engineered from latent bugs found
+The battery is **34 hand-crafted cases**, reverse-engineered from latent bugs found
 across the surveyed field and each validated to the unanimous consensus before
-admission. Every case is a **hard invariant** — a property every correct
+admission. The battery grows as new latent-bug classes surface; a per-engine integration record cites the case count current when that engine was gated. Every case is a **hard invariant** — a property every correct
 price-time-priority book must satisfy regardless of implementation — and each runs
 in its own subprocess under a 180 s timeout, so a slow-but-correct engine is never
 failed for time. The invariants probed (see the source for exact sequences):
@@ -47,6 +47,7 @@ failed for time. The invariants probed (see the source for exact sequences):
 | `multi_level_ioc_sweep`, `exact_multilevel_boundary` | a marketable order fills across price levels best-price-first, exact-fill leaves nothing resting |
 | `sweep_residual_becomes_bbo` | a non-IOC aggressor's residual rests as the new touch and is then fillable |
 | `modify_into_cross` | a modify that reprices through the spread must match, not rest crossed |
+| `modify_into_cross_price_improvement` | a crossing modify whose new limit is strictly *better* than the resting maker must still fill at the **maker's** price, both directions — the modify-path sibling of the taker-priced-trade rule (a fill at the modify's own more-aggressive limit is invisible when the reprice lands exactly on the maker, so this case reprices past it) |
 | `modify_shared_level_sibling_survives` | repricing one of two same-price orders must not lose the untouched sibling (a reprice that double-decrements the shared level orphans it) |
 | `partial_fill_then_cancel`, `modify_partially_filled_residual` | a partial-fill residual is conserved and remains cancel/modify-able |
 | `full_fill_then_stale_cancel`, `stale_modify_after_full_fill` | a cancel/modify of a fully-filled (non-resting) order must be **rejected**, not acked |

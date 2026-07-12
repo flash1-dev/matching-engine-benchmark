@@ -176,17 +176,38 @@ def fmt_mps(x):
 
 
 def worst_case(grid, label, scenarios):
-    """The engine's definitional result under the worst-case framing: the lowest
-    median throughput across `scenarios`, the scenario that produces it, and the
-    list of scenarios on which the engine is not VALID. Returns
-    (worst_mps, weakest_scenario, invalid_scenarios), or None if nothing measured."""
+    """The engine's definitional result under the worst-case framing.
+
+    A scenario that produced no valid measurement (every perf trial
+    crashed/ERRORed, so `median` is None) or that came back with a non-VALID
+    verdict (a hash divergence, a failed audit, a correctness FAIL, ...) IS
+    the worst possible outcome for that engine — it must not be silently
+    excluded from the min just because it has no number to compare against
+    the scenarios that did produce one. An engine that crashes on its hardest
+    regime does not get to be graded only on the regimes it survived. Only
+    when every scenario was measured AND VALID does the numeric minimum
+    across medians become the definitional worst case.
+
+    Returns (worst_mps, weakest_scenario, invalid_scenarios, kind) where kind
+    is "measured" (worst_mps is a genuine median), "crash" (the weakest
+    scenario had no valid measurement at all), or "invalid" (the weakest
+    scenario measured a throughput but its verdict was not VALID — worst_mps
+    is reported as 0.0 rather than that untrusted number). Returns None only
+    if `scenarios` is empty."""
     cells = [(s, grid[(label, s)]) for s in scenarios]
-    measured = [(s, c["median"]) for s, c in cells if c["median"] is not None]
-    if not measured:
+    if not cells:
         return None
-    weakest, worst_mps = min(measured, key=lambda sc: sc[1])
     invalid = [s for s, c in cells if c["verdict"] != "VALID"]
-    return worst_mps, weakest, invalid
+    crashed = [s for s, c in cells if c["median"] is None]
+    if crashed:
+        # Name the first (scenario order is fixed) rather than picking among
+        # ties — the point is that a crash always wins the "weakest" title.
+        return 0.0, crashed[0], invalid, "crash"
+    if invalid:
+        return 0.0, invalid[0], invalid, "invalid"
+    weakest, worst_mps = min(((s, c["median"]) for s, c in cells),
+                              key=lambda sc: sc[1])
+    return worst_mps, weakest, invalid, "measured"
 
 
 def summary_row(c, first):
@@ -248,13 +269,31 @@ def main():
                     [summary_row(grid[(lbl, s)], s) for s in scenarios])
         wc = worst_case(grid, lbl, scenarios) if len(scenarios) > 1 else None
         if wc:
-            worst_mps, weakest, invalid = wc
+            worst_mps, weakest, invalid, kind = wc
             print("\nWorst-case throughput — the definitional result "
                   "(an engine is only as fast as the regime it handles worst):")
-            print(f"  {fmt_mps(worst_mps)} M/s  on `{weakest}`")
-            print("  Verdict: " + ("VALID on all five scenarios" if not invalid
-                                   else "INVALID — output diverges on "
-                                        + ", ".join(invalid)))
+            if kind == "crash":
+                print(f"  CRASH/INFEASIBLE on `{weakest}` — no valid "
+                      f"measurement (every perf trial errored)")
+            elif kind == "invalid":
+                print(f"  INVALID on `{weakest}` — measured but its verdict "
+                      f"was not VALID (untrusted; see below)")
+            else:
+                print(f"  {fmt_mps(worst_mps)} M/s  on `{weakest}`")
+            if not invalid:
+                print("  Verdict: VALID on all five scenarios")
+            else:
+                # Distinguish a crash/no-output scenario from a genuine hash
+                # divergence — a crash never produced output to diverge.
+                crashed = [s for s in invalid if grid[(lbl, s)]["median"] is None]
+                diverged = [s for s in invalid if s not in crashed]
+                reasons = []
+                if crashed:
+                    reasons.append("crashed/no valid measurement on "
+                                    + ", ".join(crashed))
+                if diverged:
+                    reasons.append("output diverges on " + ", ".join(diverged))
+                print("  Verdict: INVALID — " + "; ".join(reasons))
     else:
         for s in scenarios:
             print(f"\nScenario: {s}")
@@ -264,17 +303,28 @@ def main():
         if len(scenarios) > 1:
             print("\nWorst-case ranking — the definitional result, lowest of each "
                   "engine's five scenarios (a venue must survive its worst regime):")
+            # An engine with nothing measured (every scenario crashed) must
+            # sort LAST, not first: worst_case() now reports 0.0 for that case
+            # (the worst possible outcome, never excluded from comparison), so
+            # the "nothing measured" fallback key must be the lowest possible
+            # value too — float("-inf"), not "inf" — to stay consistent under
+            # reverse=True descending order. (wc is only None when `scenarios`
+            # is empty, which can't happen here since this branch requires
+            # len(scenarios) > 1; kept as a defensive fallback.)
             ranked = sorted(
                 ((engine_label(e), worst_case(grid, engine_label(e), scenarios))
                  for e in engines),
-                key=lambda x: (x[1][0] if x[1] else float("inf")), reverse=True)
+                key=lambda x: (x[1][0] if x[1] else float("-inf")), reverse=True)
             rows = []
             for lbl, wc in ranked:
                 if wc is None:
                     rows.append((lbl, "n/a", "—", "—"))
                 else:
-                    worst_mps, weakest, invalid = wc
-                    rows.append((lbl, fmt_mps(worst_mps), weakest,
+                    worst_mps, weakest, invalid, kind = wc
+                    mps_cell = ("CRASH" if kind == "crash"
+                                else "INVALID" if kind == "invalid"
+                                else fmt_mps(worst_mps))
+                    rows.append((lbl, mps_cell, weakest,
                                  "VALID" if not invalid
                                  else f"INVALID ({len(invalid)}/{len(scenarios)})"))
             print_table(["Engine", "Worst-case M/s", "Weakest scenario", "Verdict"],
