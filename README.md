@@ -62,10 +62,10 @@ comparison (every leader is C, C++, or Rust).
 | PIN + Neighbor-aware trees | FlashOne | C++ | 33.20 | — | reference target; structure as disclosed in the paper |
 | Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid — price-indexed arena + heaps for best price |
 | Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice — 37% of the field (`std::map`, `TreeMap`) |
-| Sorted vector | melin | Rust | 7.86 | 16 | fast because a live book holds only ~5–20 active levels |
+| Sorted vector | melin | Rust | 7.86 | 16 | — |
 | AVL tree | CppTrader | C++ | 7.26 | 5 | balanced BST (CppCommon `BinTreeAVL`) |
 | B-tree / B+tree | raymondshe | Rust | 7.20 | 27 | `BTreeMap`-per-side; the common Rust default |
-| Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | balancing barely matters at ~20 levels |
+| Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | — |
 | Flat direct-indexed array (± bitmap) | asthamishra | Rust | 5.60 | 14 | O(1) by tick, but cache-thrashes a wide domain → lands lower |
 | Adaptive-radix / crit-bit tree | serum | Rust | 2.625 | 3 | serum de-chained as native code to remove VM penalty |
 | Linked-list price levels | coralme | Java | 1.97 | 2 | price-ordered level list; O(n) level lookup |
