@@ -20,10 +20,9 @@ diverge, cannot finish their slowest scenario within the message budget, or cras
 The consensus oracle is also a bug-finder: the sweep surfaced **more than 267 distinct
 correctness bugs across 199 of the 247 engines**, and **over 172 GitHub issues have been
 filed upstream** — several already fixed by their maintainers
-([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition, per-engine verdicts,
-and one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the
-industry-authored subset is broken out in
-[`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). No number or finding in any document in this repo is intended as a rank or judgment of an author's engineering quality — the harness merely reports what each pinned commit does.
+([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
+
+**No number or finding in any document in this repo is intended as a rank or judgment of an author's engineering quality** — the harness merely reports what each pinned commit does.
 
 The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
