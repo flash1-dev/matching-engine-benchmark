@@ -78,7 +78,7 @@ Throughput is what an exchange measures internally; what a trader experiences wh
 moves is **latency**, and latency under load is a property of headroom. This table stress-tests
 five high-throughput conforming engines, each in **its own weakest scenario**, at offered loads
 in the documented microburst range (5–12 M msg/s).[^t7] **All values are nanoseconds,
-P50 / P99.**
+P50 / P99.** 
 
 | Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
 |:-------|:-----------------|:------|:------|:-------|
@@ -88,9 +88,11 @@ P50 / P99.**
 | Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
 | asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
 
-**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
+**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case, the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
 
-> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s.
+The engines shown are a representative high-throughput group (worst-case ceilings in the ≈ 6–8 M/s band), chosen so the tested offered loads bracket their saturation points and isolate the objective latency effect of matcher saturation - **not a judgment or verdict** on any individual engine.
+
+> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s. 
 
 ## Quick start
 
