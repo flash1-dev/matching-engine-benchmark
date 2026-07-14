@@ -1,7 +1,7 @@
 # jeog_adapter — integration example
 
 Wraps [jeog/SimpleOrderbook](https://github.com/jeog/SimpleOrderbook)
-(Jonathon Ogden) behind `api/matching_engine_api.h`. The engine is a
+behind `api/matching_engine_api.h`. The engine is a
 price-time-priority limit-order book whose price levels are a flat,
 directly-indexed `std::vector<level>` spanning a fixed `[min, max]` tick range
 (one slot per tick).

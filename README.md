@@ -11,18 +11,19 @@ duplicates; to request coverage of an engine, contact contact@flash1.com.
 ## Results
 
 The harness has been run against **247 distinct matching engines** — every common FIFO book
-architecture, 20+ source languages. **160 reproduce the byte-identical consensus** (110 of
-them after a documented fix) and are listed in
+architecture, 20+ source languages. **160 reproduce the byte-identical consensus** (113 of them
+only after a documented correctness fix at their pinned commit; three have since merged that fix
+upstream and now conform as shipped, so 110 still carry ours) and are listed in
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **87**
 diverge, cannot finish their slowest scenario within the message budget, or crash
 ([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
 
-The consensus oracle is also a bug-finder: the sweep surfaced **more than 267 distinct
-correctness bugs across 199 of the 247 engines**, and **over 172 GitHub issues have been
-filed upstream** — several already fixed by their maintainers
+The consensus oracle is also a bug-finder: across the 247 engines tested, wherever it surfaced a
+correctness defect we drafted a fix and reported it, respectfully: **181 GitHub issues filed
+upstream** across 167 projects — **18 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
-**No number or finding in any document in this repo is intended as a rank or judgment of an author's engineering quality** — the harness merely reports what each pinned commit does.
+**This repo ranks pinned commits on one workload. No number or finding in it ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
 
 The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
@@ -31,7 +32,7 @@ beat on fully public, audited work. Every verdict in these rosters describes eac
 pinned commit** in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, not a claim about a
 project's current code or its authors' engineering quality.
 
-**‡** = authored by a professional trading-industry engineer — a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition — shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+**‡** = authored by a professional trading-industry engineer — a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors state them publicly. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition — shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
@@ -42,7 +43,7 @@ project's current code or its authors' engineering quality.
 | CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
 | raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
-| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) |
+| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: an ex-Citadel Securities engineer (17y in HFT) |
 | matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
 | chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
 
@@ -239,7 +240,7 @@ The same openness applies to our own claim: the paper's title — *"The World's 
 
 Q. Isn't this a self-serving benchmark — any conflict of interest in writing your own benchmark?
 
-A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical consensus that independent open-source engines reproduce — first established from three of them (Liquibook[^liquibook], QuantCup[^quantcup], Exchange-core[^exchangecore]) and since reproduced across the whole conforming field — not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions; you run the harness yourself.
+A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical consensus that independent open-source engines reproduce — first established from three of them (Liquibook[^liquibook], QuantCup[^quantcup], Exchange-core[^exchangecore]) and since reproduced across the whole conforming field — not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions.
 
 Q. I only want to check that my engine is correct — can I ignore the throughput number?
 
@@ -247,7 +248,9 @@ A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the 
 
 Q. Isn't a fast matching engine easy to build?
 
-A. Implementing one from the recipes already on the internet is. Inventing new data structures and algorithms that make matching several times faster on the same hardware is not. If writing a fast matching algorithm were easy, industry experts' own engines would routinely reproduce top results; their measured results are catalogued in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+A. This question conflates implementing a fast matcher with inveting one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is several times faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
+
+Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and faster hardware buy — and **nothing occupies the ~25 M/s above it**. FlashOne reaches **33.20 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 4× margin is not what implementation tweaks accumulate to.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 

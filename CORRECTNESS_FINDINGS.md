@@ -7,7 +7,8 @@ of any divergence, and the upstream issue filed for it. The conformance vocabula
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the pre-run gate in
 [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-The harness surfaced **more than 267 distinct correctness bugs across 199 of the 247 engines**:
+Wherever the harness surfaced a correctness defect we drafted a fix and reported it respectfully — mechanism, reproduction, suggested patch: **181 GitHub issues are filed upstream** where a single GitHub issue sometimes contains up to 5 distinct defects (**18 of those filed issues are already fixed** by the maintainers, and none of the filed issues so far were declined, marked *wontfix*, or closed as not-planned — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)); a few were
+unfileable (repo archived / issues disabled). The per-engine status is:
 
 | | engines |
 |:--|--:|
@@ -16,20 +17,25 @@ The harness surfaced **more than 267 distinct correctness bugs across 199 of the
 | conform as shipped, surfaced defect since resolved upstream | **3** |
 | conform as shipped, no correctness defect (43 fully clean, 4 with a perf/build/off-scope note) | **47** |
 
-Many buggy engines carry several separate defects — a few carry five or six — which is why the
-bug count runs ahead of the engine count. **Over 172 GitHub issues are filed upstream** (nine
-findings already fixed by maintainers — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)); a few
-were unfileable (repo archived / issues disabled). Each roster row carries the one-line finding
-and the filed-issue link; the issue holds the full mechanism, reproduction, and suggested fix.
+**We publish no count of "buggy" engines, and no total defect count.** Non-conforming is not the
+same as defective: an engine may fail to reproduce the consensus because it implements a
+deliberate design choice — a documented alternative pricing convention, an on-chain per-call gas
+cap, a restricted price domain — or because it is byte-identical wherever it completes and is
+simply too slow to finish its worst scenario within the message budget. Whether a given
+representational limit is a defect or a design decision is a judgment we decline to make on an
+author's behalf. 
 
-This document is a snapshot, not a judgment: each observation describes the pinned commit in
+Each roster row carries the one-line finding and, where one exists, the filed-issue
+link; the issue holds the full mechanism, reproduction, and suggested fix.
+
+This document is a snapshot, not a judgment or verdict: each observation describes the pinned commit in
 [`SNAPSHOTS.md`](SNAPSHOTS.md) (or the commit named in the finding), and a project's current
 `main` may already differ. **We draw no conclusion about engineering quality or fitness for any
 use case** — every finding is offered back, not aimed at anyone.
 
 **‡** = authored by a professional trading-industry engineer or firm — a **personal side project with no
 commercial intent, not their employer's work**, except where a finding explicitly labels an official
-vendor/org repo. Affiliations are as the authors publicly state them, not independently verified by us.
+vendor/org repo. Affiliations are as the authors state them publicly.
 
 ## How the harness probes correctness
 
@@ -52,7 +58,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | CppTrader | C++ | — | 7.26 (normal) | conforms | — on canonical; a `ModifyOrder` crash off the canonical path is fixed upstream | resolved ([#42](https://github.com/chronoxor/CppTrader/issues/42)) |
 | raymondshe | Rust | MIT/Apache | 7.20 | conforms | a phantom zero-qty match corrupts the next resting order's id | [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | Kautenja | C++ | — | 6.88 (normal) | conforms | duplicate live order-id → unchecked `emplace` re-inserts the first order (self-linked FIFO, double-counted volume, UAF on cancel) — fix verified, VALID ×5 across 100 seeds | [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
-| ndfex ‡ | C++ | — | 6.825 (swing-25) | conforms | — (std::map RB-tree book, clean); author: Matthew Belcher (ex-Citadel Securities, 17y HFT) | — |
+| ndfex ‡ | C++ | — | 6.825 (swing-25) | conforms | — (std::map RB-tree book, clean); author: an ex-Citadel Securities engineer (17y in HFT) | — |
 | mtengine | Rust | — | 6.82 (static) | non-conforming | flat array + bitmap, bounded price domain — diverges on `flash-crash` / the widest swings | — (no draft) |
 | matchcore | Rust | Apache-2.0/MIT | 6.58 | conforms | a marketable limit passes `None` as its limit to `match_order`, so it sweeps every opposite level like a market order and pays through its own limit price | [#167](https://github.com/minyukim/matchcore/issues/167) |
 | chronex | C++ | MIT | 6.47 | conforms | FOK / AON makers fill at the aggressor's price, not the maker's | [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
@@ -119,7 +125,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | e2q | C++ | — | 1.08 (swing-25) | non-conforming | `Market::match()` silently discards any order that doesn't fully cross within one call — non-price-time by design (architectural) | [Suggestion] [#1](https://github.com/E2Quant/e2q/issues/1) |
 | dx1ngy | Java | MIT | 1.07 | conforms | `match()` prices every fill at the sell order's price, so a sell crossing a higher bid prints the aggressor's lower price (measured with the maker-price fix) | [#1](https://github.com/dx1ngy/trading/issues/1) — resolved upstream ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)) |
 | ironcrypto ‡ | Rust | none | 1.04 (6.2 normal) | conforms | README advertises a `cancel` API that was removed from the engine; the adapter restores the engine's own removed cancel impl to measure it (faithfulness caveat); author: self-described 'TradFi/DeFi Quant' | — |
-| javalob ‡ | Java | MIT | 1.03 (swing-40) | conforms | worst case with bidirectional `engine_on_batch` (per-message JNI delivery 0.86); teaching LOB, clean; author: Ash Booth (JPMorgan) | — |
+| javalob ‡ | Java | MIT | 1.03 (swing-40) | conforms | worst case with bidirectional `engine_on_batch` (per-message JNI delivery 0.86); teaching LOB, clean; author: a JPMorgan engineer | — |
 | shal | Go | MIT | 1.00 (static) | conforms | `Engine.execute` derives the trade price from `order.ID > other.ID` rather than the resting maker, so it prints at the aggressor's price when ids are not arrival-ordered | [#1](https://github.com/shal/orderbook/issues/1) |
 | yllvar | Rust | none | 1.00 | conforms | the matcher is clean; an off-scope settlement-Merkle odd-node duplication (a non-binding state commitment) is not filed | — |
 | jcwangjc | Java | none | 0.96 | conforms | `processMath` copies the taker's `turnover` into the maker (off the matched-output path) | [#1](https://github.com/jcwangjc/exchange-matching-engine/issues/1) |
@@ -147,7 +153,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | mercury | Java | MIT | 0.39 | conforms | a fully-consumed maker is never evicted from the `orders` id-index → a later cancel of that filled id is acked and NPEs | [#1](https://github.com/notayessir/mercury-match-engine/issues/1) |
 | circus | C# | — | 0.39 (swing-25) | conforms | reusing a completed order id crashes; a partial-fill-then-modify silently rests short; `Process()` swaps `Price`/`TriggerPrice`; fixed | [#1](https://github.com/seanoflynn/circus/issues/1) |
 | masroor47 | Python | none | 0.38 (static infeasible) | non-conforming | `add_order` rebuilds the trade history with `pd.concat` every call → O(n²) | [#2](https://github.com/masroor47/limit-order-book/issues/2) |
-| damian ‡ | Kotlin | Apache-2.0 | 0.38 (static) | conforms | — (clean); author: Damian Howard (20y at a bank) | — |
+| damian ‡ | Kotlin | Apache-2.0 | 0.38 (static) | conforms | — (clean); author: a developer with 20y at a bank | — |
 | arjun | C++ | — | 0.36 | non-conforming | price priority across levels not enforced — `sortOrders()` is written but never called | [Bug Report] [#1](https://github.com/ArjunXvarma/mini-quant-trading-engine/issues/1) |
 | shaunlwm | TypeScript | MIT | 0.33 | conforms | `OrderTree.updateOrder` removes the order twice, double-decrementing the level length so a still-populated level is deleted, orphaning siblings | [#1](https://github.com/ShaunLWM/LimitOrderBook/issues/1) |
 | dsirotkin | C++ | — | 0.31 (static) | conforms | cancel range-erases the rest of the price level; only fires off the canonical path — fix verified, VALID ×5 across 100 seeds | drafted — repo archived, unfiled |
@@ -168,7 +174,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | OrderBook-rs ‡ | Rust | — | 0.13 (static) | conforms | partial fill demotes the maker to the FIFO tail → wrong counterparty; quantities correct — fix verified, VALID ×5 across 100 seeds; author: a quant developer at Capital Delta | [#88](https://github.com/joaquinbejar/OrderBook-rs/issues/88) — resolved upstream ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)) |
 | abyssbook | Zig | — | 0.12 (static) | non-conforming | `swapRemove` FIFO-scramble + SIMD batch over-fill + stale best-bid/ask cache (no Zig toolchain to apply the filed fix) | [#41](https://github.com/aldrin-labs/abyssbook/issues/41) |
 | lirezap | Java | ISC | ~1.2–1.6 (0.11 static) | conforms | FOK fills only against the single best level → a multi-level-fillable FOK is killed | [#1](https://github.com/lirezap/OMS/issues/1) |
-| dydx ‡ | Go | GPL-3.0 | 0.11 (swing-25) | conforms | — (de-chained v4 memclob, accessor-only); author: Antonio Juliano (dYdX founder) | — |
+| dydx ‡ | Go | GPL-3.0 | 0.11 (swing-25) | conforms | — (de-chained v4 memclob, accessor-only); author: a dYdX founder | — |
 | vincurious | Java | none | 0.10 (static) | conforms | the ask comparator orders highest-price-first, so a marketable buy fails to cross the best ask and rests into a crossed book (measured with the inversion fix) | [#4](https://github.com/vinCurious/OrderMatchingEngine/issues/4) |
 | volt | Zig | — | 0.10 | conforms | — (RB-tree + flat-array + hierarchical bitset, novel) | — |
 | dgtony | Rust | — | 0.09 (static) | conforms | id-gen wraps [1,1000] (1001st order dropped); amend leaves the book crossed — fix verified, VALID ×5 across 100 seeds | [#9](https://github.com/dgtony/orderbook-rs/issues/9) |
@@ -177,7 +183,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | jugutier | Java | none | 0.08 (static infeasible) | non-conforming | `PriorityOrderBook.update()` null-derefs when the order's side has no resting queue yet | [#1](https://github.com/jugutier/OrderBook/issues/1) |
 | matchingo | Go | — | 0.08 (static) | conforms | report stream correct; `UpdateVolume` subtracts the remainder not the consumed qty → depth audit fails — fix verified, VALID ×5 across 100 seeds | [#1](https://github.com/GOnevo/matchingo/issues/1) — resolved upstream ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)) |
 | php_matcher | PHP | none | 0.08 | conforms | float→int array-key truncation merges distinct sub-integer prices into one price level | issues disabled — unfileable |
-| vega ‡ | Go | AGPL-3.0 | 0.08 (static) | conforms | — (accessor-only); author: Barney Mannerings (designed a London Stock Exchange matcher; Vega Protocol) | — |
+| vega ‡ | Go | AGPL-3.0 | 0.08 (static) | conforms | — (accessor-only); author: a Vega Protocol founder (designed a London Stock Exchange matcher) | — |
 | bexchange | Go | — | 0.07 | conforms | fill loop drops partially-filled makers / emits phantom 0-qty fills / an equal-priced buy never crosses | duplicate of [#2](https://github.com/bhomnick/bexchange/issues/2) |
 | lobrs | Rust | Apache-2.0 | 0.07 | conforms | after `cancel_order` empties the best level, `best` is left `None` and never recomputed, so matching stops while deeper levels still rest | [#1](https://github.com/rafalpiotrowski/lob-rs/issues/1) |
 | pantelwar | Go | — | 0.07 (static) | conforms | off-path hot-path debug logging + a `MarshalJSON` sell-side bug — fix verified, VALID ×5 across 100 seeds | [#26](https://github.com/Pantelwar/matching-engine/issues/26) |
@@ -279,13 +285,13 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | zackienzle | C++ | — | crash (wide swings) | non-conforming | hierarchical 4-tier bitmap, bounded price domain — crashes (OOB) on `swing-40` / `flash-crash` | — (no draft) |
 | zhaocong6 | Go | — | — | non-conforming | `cancel` drops every order at the price level, not just the target | [#1](https://github.com/zhaocong6/match/issues/1) |
 | zzsun777 | C++ | — | infeasible | non-conforming | byte-identical on every completed cell; O(n) by-owner find exceeds the watchdog on its worst scenario | — |
-| bitex ‡ | Python | — | infeasible (static) | non-conforming | correct on normal/swings, but the static deep-book scenario times out at 2 M; author: Rodrigo Souza (founder/CEO of BlinkTrade, the open-source platform behind the Foxbit exchange) | — |
+| bitex ‡ | Python | — | infeasible (static) | non-conforming | correct on normal/swings, but the static deep-book scenario times out at 2 M; author: a founder of BlinkTrade (the open-source platform behind the Foxbit exchange) | — |
 | eneiand | C# | none | infeasible (2 M) | non-conforming | byte-identical at reduced counts (2k–100k) and clean on the conformance gate, but the canonical 1 M is infeasible at 2 M; single-thread .NET matcher | — |
-| figgie ‡ | OCaml | — | infeasible (static) | non-conforming | byte-identical where it completes, but static times out at 2 M; author: Ben Millwood (ex-Jane Street) — figgie is Jane Street's *Figgie* card game (a FIFO matcher), not a commercial engine | — |
+| figgie ‡ | OCaml | — | infeasible (static) | non-conforming | byte-identical where it completes, but static times out at 2 M; author: an ex-Jane Street engineer — figgie is Jane Street's *Figgie* card game (a FIFO matcher), not a commercial engine | — |
 | isaaccheng ‡ | Python | — | infeasible (static) | non-conforming | byte-identical where it completes, but static times out at 2 M; author: ex-T. Rowe Price fixed-income quant developer | — |
-| abides ‡ | Python | — | infeasible (static) | non-conforming | byte-identical on small cells, but static times out at 2 M; JPMorgan's research org repo (author: Tucker Balch) | — |
+| abides ‡ | Python | — | infeasible (static) | non-conforming | byte-identical on small cells, but static times out at 2 M; JPMorgan's research org repo | — |
 | lykke ‡ | Kotlin | — | infeasible (static) | non-conforming | fast on normal; its static deep-book run exceeded the 2 M-message budget at the pinned commit (conforms on the scenarios it completes); the Lykke exchange's own engine | — |
-| pylob ‡ | Python | — | infeasible (static) | non-conforming | SQLite-backed; static times out at 2 M; author: Ash Booth (JPMorgan) | [#8](https://github.com/DrAshBooth/PyLOB/issues/8) |
+| pylob ‡ | Python | — | infeasible (static) | non-conforming | SQLite-backed; static times out at 2 M; author: a JPMorgan engineer | [#8](https://github.com/DrAshBooth/PyLOB/issues/8) |
 | alphatrade | Python | — | infeasible | non-conforming | JAX matcher, ~7 ms/message → infeasible at 2 M; author: KangOxford (academic) | [#49](https://github.com/KangOxford/AlphaTrade/issues/49) |
 | konqr | Python | — | — | non-conforming | Hawkes-process simulator — not a price-time CLOB in the form the benchmark needs | [#19](https://github.com/konqr/lobSimulations/issues/19) |
 | lethalazo ‡ | C++ | — | — | non-conforming | add-only book, missing the cancel/modify operations the benchmark drives; author: at Marshall Wace (hedge fund) | [#1](https://github.com/lethalazo/cpp-order-matching-engine/issues/1) |
