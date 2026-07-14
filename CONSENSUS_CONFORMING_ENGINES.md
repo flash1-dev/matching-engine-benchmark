@@ -56,6 +56,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | gocronx (84★) | Rust | as shipped | 1.77 (static) | ~17M/s |  |
 | robdev ‡ | Rust | with fix | 1.76 (static) | — | clear the emptied price level on cancel, return the real cancel result, and kill the IOC residual — all latent as-shipped (match path immune; the stale best_price is caught by the gate's state audit) [#1](https://github.com/rob-DEV/match-engine/issues/1); author: a CME Group engineer |
 | stocksharp (10236★) ‡ | C# | with fix | 1.64 (swing-25) | — | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; author: StockSharp / trading-tech vendor; [#681](https://github.com/StockSharp/StockSharp/issues/681) |
+| jiang | Java | with fix | 1.63 (swing-25) | — | 1-line `idMaps.remove(id)` so modify doesn't drop the order [#3](https://github.com/JiangYongKang/FastMatchingEngine/issues/3); worst case via the engine's batch ABI (`engine_on_batch`); per-message JNI delivery is 1.30 |
 | apex | Rust | with fix | 1.62 (static) | — | execute at the maker price, not the aggressor's limit [#3](https://github.com/crypto-zero/apex-engine/issues/3) |
 | kartikeya | C++ | with fix | 1.61 | — | OrderIndex::erase backward-shift corruption fix [#1](https://github.com/Kartikeya2710/order-matching-engine/issues/1) |
 | matchina ‡ | Rust | with fix | 1.60 (static) | — | taker-exhaustion guard — no phantom zero-quantity trades; fixed upstream — `RESOLVED_FINDINGS.md`; author: at GSR (crypto market maker) [#3](https://github.com/fran0x/matchina/issues/3) |
@@ -66,9 +67,8 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | phoenix ‡ | Rust | as shipped | 1.5 (static) | — | de-chained production Solana CLOB (Ellipsis Labs; founders ex-Jane Street/Citadel); clean |
 | tembolo ‡ | C | with fix | 1.475 (swing-25) | — | two capacity ceilings (8192-order pool silent-drop + 512 price-level abort) [#1](https://github.com/tembolo1284/matching-engine-c/issues/1); author: a quantitative developer at Tradeweb |
 | cryptonstudio | Go | as shipped | 1.47 | — | clean; a quote-locking pricing observation was investigated and dropped |
-| Exchange-core (2556★) | Java/JVM | as shipped | 1.40 (flash-crash) | — | baseline; direct-access book, JNI per message |
+| Exchange-core (2556★) | Java/JVM | as shipped | 1.40 (flash-crash) | — | baseline; direct-access book; worst case with `engine_on_batch` — per-message JNI delivery 1.20 |
 | loom | Rust | with fix | 1.39 (static) | — | check FOK fillability against total reachable quantity, not one maker at a time — a multi-maker-fillable FOK fills [#1](https://github.com/AlphaGodzilla/loom/issues/1) |
-| jiang | Java | with fix | 1.30 (swing-25) | — | 1-line `idMaps.remove(id)` so modify doesn't drop the order [#3](https://github.com/JiangYongKang/FastMatchingEngine/issues/3) |
 | sadhbh | C++ | with fix | 1.28 (static) | — | C++20 coroutines; exact-touch crossing + empty-book deref guard [#6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6) |
 | koral ‡ | C++ | as shipped | 1.255 (normal) | — | FIX exchange (clean; thread-affinity plumbing only); author: a Coinbase software-engineering intern |
 | magenta_mice | C++ | as shipped | 1.17 | — | std::map price → deque per side, native FAK/IOC |
@@ -77,6 +77,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | cjboxing | Java | with fix | 1.12 | — | filled order removed from PriceBucket but never orderMap; stale cancel acked [#1](https://github.com/cjBoxing/match/issues/1) (repo 404 since 2026-06-29) |
 | dx1ngy | Java | with fix | 1.07 | — | match() prices fills at sell's price; maker-price fix [#1](https://github.com/dx1ngy/trading/issues/1) (resolved) |
 | ironcrypto ‡ | Rust | with fix | 1.04 (6.2 normal) | — | no-license; adapter restores engine's removed cancel impl (faithfulness caveat); author: self-described 'TradFi/DeFi Quant' |
+| javalob ‡ | Java | as shipped | 1.03 (swing-40) | — | teaching LOB (clean); author: Ash Booth (JPMorgan); worst case with bidirectional `engine_on_batch` — per-message JNI delivery 0.86 |
 | yllvar | Rust | as shipped | 1.00 | — | clean matcher; off-scope settlement-Merkle odd-node duplication (off scope) |
 | shal | Go | with fix | 1.00 (static) | — | Engine.execute derives trade price from order.ID>other.ID, not resting maker [#1](https://github.com/shal/orderbook/issues/1) |
 | jcwangjc | Java | with fix | 0.96 | — | accumulate the maker's turnover from its own running total, not the taker's (off the matched-output path) [#1](https://github.com/jcwangjc/exchange-matching-engine/issues/1) |
@@ -84,7 +85,6 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | trusted ‡ | Rust | with fix | 0.925 (static) | — | latent bid-side market-order double-subtract underflow [#9](https://github.com/JunbeomL22/trusted/issues/9); author: a KRX market-maker at IBK Securities |
 | ffhan | Go | with fix | 0.89 | — | Cancel soft-flag fix [#4](https://github.com/ffhan/tome/issues/4) |
 | kennethzhang ‡ | C++ | with fix | 0.86 (static) | — | price the limit-vs-limit cross at the resting maker, not the taker (the adapter normalizes it today) [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1); author: a Squarepoint quant researcher |
-| javalob ‡ | Java | as shipped | 0.86 (swing-40) | — | teaching LOB (clean); author: Ash Booth (JPMorgan) |
 | swirly ‡ | Java | as shipped | 0.79 (swing-40) | — | clean — native revise changes only lots, so modify = cancel+reinsert per contract; author: a trading-systems developer; co-founder of Reactive Markets |
 | i25959341 (550★) | Go | with fix | 0.72 (swing-25) | >300k/s | per-side Volume() correct after a partial fill |
 | jlob | Java/JNI | as shipped | 0.71 (static) | ~127 ns/op | L3 RB-tree, working JNI adapter |

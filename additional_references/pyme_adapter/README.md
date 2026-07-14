@@ -71,8 +71,8 @@ exports no `engine_prebuild`, so the harness runs no prebuild pass (nothing is
 inserted into the book ahead of the timed run). The harness reports two engine
 threads "after_init"; these are the embedded interpreter's own runtime threads,
 not matcher workers — all matching runs on the harness's matcher thread under
-the GIL (released once after init, re-acquired per ABI call via
-`PyGILState_Ensure`).
+the GIL (acquired once at init and held for the whole run — there is no per-call
+`PyGILState_Ensure` on the hot path; it is released at `engine_shutdown`).
 
 ## Source patch
 

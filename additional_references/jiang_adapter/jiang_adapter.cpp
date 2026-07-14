@@ -64,6 +64,7 @@ jobject g_engine = nullptr;      /* HarnessJiang instance (global ref) */
 
 jmethodID m_onNew, m_onCancel, m_onModify, m_setBuf, m_bestBid, m_bestAsk, m_depthAt;
 jmethodID m_lastCancelSide;
+jmethodID m_setBatchIn, m_setBatchOut, m_onBatch;   /* batch path */
 
 const me_transport_t* g_transport = nullptr;   /* harness report transport */
 void*                 g_sink      = nullptr;
@@ -84,9 +85,23 @@ struct StageTrade {
 };
 static_assert(sizeof(StageTrade) == 40, "StageTrade must be 40 bytes");
 
-constexpr int STAGE_CAP = 4096;      /* far more than any one order fills */
+/* Max fills one order can stage. Must exceed the deepest single-order sweep the
+ * harness can deliver: the conformance suite's deep_recursive_sweep_5000 crosses
+ * one IOC through 5000 resting levels — 5000 fills in a single engine_on_new_order
+ * — so the previous 4096 overflowed this staging buffer (an IndexOutOfBoundsException
+ * on the ~4096th fill, on BOTH the per-message and the batch path). 8192 clears
+ * that worst case with headroom; the canonical workloads fill far fewer. Kept in
+ * sync with HarnessJiang.STAGE_CAP (the Java side sizes its report reserve off it). */
+constexpr int STAGE_CAP = 8192;
 StageTrade g_stage[STAGE_CAP];
 jobject    g_byteBuf = nullptr;      /* direct ByteBuffer over g_stage (global) */
+
+/* Batch path (engine_on_batch): HarnessJiang.onBatch writes the FULL me_report_t
+ * stream for a run of messages straight into this buffer; this side just drains
+ * it into the transport. 65536 reports = 4 MB. */
+constexpr int OUT_CAP = 1 << 16;
+me_report_t g_outbuf[OUT_CAP];
+jobject     g_outBuf = nullptr;      /* direct ByteBuffer over g_outbuf (global) */
 
 [[noreturn]] void fatal(const char* msg) {
     std::fprintf(stderr, "jiang_adapter: %s\n", msg);
@@ -226,6 +241,9 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     m_bestBid        = lookup("bestBid",        "()J");
     m_bestAsk        = lookup("bestAsk",        "()J");
     m_depthAt        = lookup("depthAt",        "(JI)J");
+    m_setBatchIn     = lookup("setBatchIn",     "(Ljava/nio/ByteBuffer;)V");
+    m_setBatchOut    = lookup("setBatchOut",    "(Ljava/nio/ByteBuffer;)V");
+    m_onBatch        = lookup("onBatch",        "(II)J");
     jmethodID m_warmup = lookup("warmup", "()V");
 
     jobject obj = g_env->NewObject(cls, ctor);
@@ -240,7 +258,18 @@ void engine_init(uint64_t /*seed*/, const me_transport_t* transport,
     g_env->CallVoidMethod(g_engine, m_setBuf, g_byteBuf);
     check_exception("setTradeBuffer");
 
-    /* Warm the hot path now, while the harness is not timing. */
+    /* Hand over the batch-path report buffer (wrapped once). Pre-touched here so
+     * its pages never minor-fault inside the timed window. */
+    std::memset(g_outbuf, 0, sizeof(g_outbuf));
+    jobject obb = g_env->NewDirectByteBuffer(g_outbuf, sizeof(g_outbuf));
+    if (!obb) fatal("NewDirectByteBuffer(outbuf) failed");
+    g_outBuf = g_env->NewGlobalRef(obb);
+    g_env->CallVoidMethod(g_engine, m_setBatchOut, g_outBuf);
+    check_exception("setBatchOut");
+
+    /* Warm the hot path now, while the harness is not timing. Warms BOTH the
+     * per-message handlers and the batch loop, so neither arm of the A/B pays
+     * JIT-compilation cost inside the measured window. */
     g_env->CallVoidMethod(g_engine, m_warmup);
     check_exception("HarnessJiang.warmup");
 }
@@ -320,6 +349,46 @@ uint64_t engine_query_depth_at(int64_t price_ticks, uint8_t side) {
         static_cast<jlong>(price_ticks), static_cast<jint>(side));
     check_exception("depthAt");
     return static_cast<uint64_t>(v);
+}
+
+/* ---------------------------------------------------------------------------
+ * OPTIONAL batch delivery (api/matching_engine_api.h: engine_on_batch).
+ *
+ * The per-message path above crosses into the JVM once per message (twice for a
+ * cancel that hits: onCancel + lastCancelSide). This path crosses ONCE for the
+ * whole run: the me_msg_t array is wrapped in a direct ByteBuffer, and
+ * HarnessJiang.onBatch loops over it ON THE JAVA SIDE, calling exactly the same
+ * per-message handlers (onNew / onCancel / onModify) in array order, with no
+ * lookahead.
+ *
+ * Outbound is batched the same way. Java writes the FULL me_report_t stream —
+ * the acks this file's emit_ack() would have written, interleaved with the
+ * trades in the same order — straight into g_outbuf (a shared direct
+ * ByteBuffer, not a JNI upcall), and this side drains it into the transport
+ * once per crossing. So an N-message run costs ~3 JNI crossings instead of ~N.
+ *
+ * onBatch sub-chunks against OUT_CAP and returns (messagesConsumed << 32) |
+ * reportsWritten, so a run whose reports would overflow g_outbuf is drained and
+ * resumed rather than truncated.
+ * ---------------------------------------------------------------------------*/
+void engine_on_batch(const me_msg_t* msgs, uint32_t n) {
+    jobject inbb = g_env->NewDirectByteBuffer(const_cast<me_msg_t*>(msgs),
+                                              static_cast<jlong>(n) * sizeof(me_msg_t));
+    if (!inbb) fatal("NewDirectByteBuffer(batch) failed");
+    g_env->CallVoidMethod(g_engine, m_setBatchIn, inbb);
+    check_exception("setBatchIn");
+    uint32_t start = 0;
+    while (start < n) {
+        jlong packed = g_env->CallLongMethod(g_engine, m_onBatch,
+                           static_cast<jint>(start), static_cast<jint>(n));
+        check_exception("onBatch");
+        uint32_t consumed = static_cast<uint32_t>(static_cast<uint64_t>(packed) >> 32);
+        uint32_t written  = static_cast<uint32_t>(static_cast<uint64_t>(packed) & 0xffffffffu);
+        for (uint32_t k = 0; k < written; ++k) push_report(g_outbuf[k]);
+        if (consumed <= start) fatal("onBatch made no forward progress");
+        start = consumed;
+    }
+    g_env->DeleteLocalRef(inbb);
 }
 
 }  // extern "C"

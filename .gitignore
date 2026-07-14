@@ -40,3 +40,8 @@ __pycache__/
 reference/canonical_output.txt
 reference/canonical_output_*.txt
 CONSISTENCY_REVIEW.md
+*.pdf
+# Internal working docs — never publish
+AMENDMENT_PROPOSAL.md
+DOCS_IMPACT_AMENDMENT.md
+README_IMPACT_AMENDMENT.md

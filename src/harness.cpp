@@ -211,16 +211,78 @@ void drainer_main(DrainState* s) {
     _exit(3);
 }
 
-void install_guards() {
+/* The fatal-signal guard set, partitioned by how it is re-asserted after
+ * engine_init (see reassert_guards_after_init). install_guards() arms the union
+ * of the two arrays; keeping the sets named here means the two functions cannot
+ * drift — add a signal in one place and both honour it. */
+constexpr int GUARD_SIGS_UNCONDITIONAL[] = { SIGALRM, SIGABRT };         // never a runtime's control flow
+constexpr int GUARD_SIGS_RUNTIME_OWNED[] = { SIGSEGV, SIGBUS, SIGFPE };  // a managed runtime may own these
+
+void arm_guard_or_die(int sig) {
     struct sigaction sa;
     std::memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_fatal_signal;
-    for (int sig : { SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGALRM }) {
-        if (sigaction(sig, &sa, nullptr) != 0) {
-            std::fprintf(stderr,
-                "ERROR: sigaction(%d) failed: %s — fatal-signal reporting will "
-                "not function; aborting.\n", sig, std::strerror(errno));
-            std::exit(1);
+    if (sigaction(sig, &sa, nullptr) != 0) {
+        std::fprintf(stderr,
+            "ERROR: sigaction(%d) failed: %s — fatal-signal reporting will not "
+            "function; aborting.\n", sig, std::strerror(errno));
+        std::exit(1);
+    }
+}
+
+void install_guards() {
+    for (int sig : GUARD_SIGS_UNCONDITIONAL) arm_guard_or_die(sig);
+    for (int sig : GUARD_SIGS_RUNTIME_OWNED) arm_guard_or_die(sig);
+}
+
+/* Re-assert the guards AFTER engine_init WITHOUT clobbering a managed runtime's
+ * own fault handlers.
+ *
+ * A managed runtime (HotSpot, .NET, Go) installs its own SIGSEGV / SIGBUS / SIGFPE
+ * handlers during engine_init and REQUIRES them as ordinary control flow: on
+ * AArch64 HotSpot polls safepoints with a trapping load from a guarded page and
+ * compiles null checks as trapping loads, so a perfectly healthy JVM faults by
+ * design and recovers inside its own handler. Re-installing our handlers over the
+ * top turns a JVM engine's first GC/safepoint into a bogus "engine crashed" — it
+ * silently broke every JVM engine in the field, including the exchange_core
+ * baseline. (This is also why the JDK ships libjsig: an embedding process must not
+ * steal the JVM's fault handlers.)
+ *
+ * The guards installed BEFORE engine_init still do the real work: a runtime that
+ * installs a handler chains a genuine, non-runtime fault straight back to the
+ * previously-installed handler — ours. So all that is left to close is the actual
+ * disarm attack:
+ *   SIGALRM / SIGABRT  — no language runtime uses these as control flow, and
+ *                        disarming SIGALRM would defeat the hang watchdog, so
+ *                        re-assert them unconditionally.
+ *   SIGSEGV/BUS/FPE    — re-arm ONLY if the engine actually disarmed them
+ *                        (SIG_DFL / SIG_IGN). A real handler is left in place: a
+ *                        legitimate runtime chains a genuine fault back to ours,
+ *                        and a no-op swallower that merely returns re-executes the
+ *                        faulting instruction forever → the re-asserted SIGALRM
+ *                        watchdog fails the run.
+ *
+ * RESIDUAL (in-process trust model — docs/ANTI_CHEAT.md, "What the harness does
+ * not police"): this does NOT catch a handler that *repairs* the fault — e.g. an
+ * SA_SIGINFO handler that advances the trapping PC past the faulting instruction
+ * and continues — which can swallow a genuine crash cleanly. Nor does re-asserting
+ * the SIGALRM *handler* stop an engine from cancelling the pending alarm *timer*
+ * (alarm(0)) from inside a later call. Both are closed only by the child-process
+ * isolation noted at the call site, not by any in-process guard. */
+void reassert_guards_after_init() {
+    for (int sig : GUARD_SIGS_UNCONDITIONAL) arm_guard_or_die(sig);
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_fatal_signal;
+    for (int sig : GUARD_SIGS_RUNTIME_OWNED) {
+        struct sigaction cur;
+        if (sigaction(sig, nullptr, &cur) != 0) continue;   // can't query: leave it
+        if (cur.sa_handler == SIG_DFL || cur.sa_handler == SIG_IGN) {
+            if (sigaction(sig, &sa, nullptr) != 0)          // engine disarmed it: re-arm
+                std::fprintf(stderr,
+                    "WARNING: could not re-arm signal %d after engine_init: %s — a "
+                    "crash on it may bypass clean failure reporting.\n",
+                    sig, std::strerror(errno));
         }
     }
 }
@@ -396,6 +458,53 @@ int main(int argc, char** argv) {
     std::vector<WorkloadMsg> workload;
     if (!load_workload(workload_path, workload)) return 1;
 
+    // Anti-cheat: install the fatal-signal guards AND snapshot the correctness
+    // reference BEFORE any engine-controlled code runs. Engine code begins at the
+    // dlopen() inside load_engine() below — a shared object's ELF constructors
+    // execute during dlopen, before engine_init — so both steps must precede
+    // load_engine(), not merely eng.init(). (An earlier version snapshotted after
+    // dlopen; a constructor could stamp a forged hash first — a confirmed hole.)
+    install_guards();
+
+    // The verdict later compares the engine's output against THIS snapshot, not
+    // whatever reference/correctness_hash.txt holds after the run — so an engine
+    // cannot forge a PASS by overwriting the file, whether from a dlopen
+    // constructor, engine_init, an engine-supplied transport callback, or the
+    // timed run itself. (Residual: the map is in the harness's own address space,
+    // so a determined in-process engine could patch it directly — the cooperative
+    // trust model, docs/ANTI_CHEAT.md; the structural close is child-process
+    // isolation.)
+    const std::string hash_path = "reference/correctness_hash.txt";
+    const std::string want_tag =
+        scenario + "_seed" + std::to_string(seed) +
+        "_count" + std::to_string(count) + "_reports.txt";
+    // The hash file is one `<sha256>  <tag>` line per (scenario, seed). Read the
+    // existing entries into a map so the file accumulates across scenarios — and a
+    // single line is still a valid file.
+    auto read_hash_file = [&hash_path]() {
+        std::map<std::string, std::string> out;
+        FILE* fp = std::fopen(hash_path.c_str(), "rb");
+        if (!fp) return out;
+        // Read line by line (fgets, not fscanf) so an over-long or malformed
+        // token cannot desync the stream and hide later valid entries, and accept
+        // an entry only when the hash is exactly 64 lowercase hex chars. First
+        // entry for a tag wins (emplace), so an appended duplicate line cannot
+        // shadow the genuine one.
+        char line[512];
+        while (std::fgets(line, sizeof(line), fp)) {
+            char h[256], t[256];
+            if (std::sscanf(line, "%255s %255s", h, t) != 2) continue;
+            std::string hash(h);
+            if (hash.size() != 64 ||
+                hash.find_first_not_of("0123456789abcdef") != std::string::npos)
+                continue;
+            out.emplace(t, hash);
+        }
+        std::fclose(fp);
+        return out;
+    };
+    const std::map<std::string, std::string> pre_read_hash_entries = read_hash_file();
+
     // --- load the engine ----------------------------------------------------
     std::printf("Loading engine: %s\n", engine_path.c_str());
     EngineLib eng;
@@ -403,7 +512,9 @@ int main(int argc, char** argv) {
 
     // --- transport + drainer ------------------------------------------------
     // The engine emits its own reports; the harness only drains them. An engine
-    // may supply its own transport, otherwise the harness default is used.
+    // may supply its own transport, otherwise the harness default is used. The
+    // guards installed above already cover this engine-supplied code (get_transport
+    // / create) and the drainer's first touch of the transport.
     const me_transport_t* transport = (eng.get_transport && eng.get_transport())
         ? eng.get_transport() : harness_default_transport();
     void* queue = transport->create(QUEUE_CAPACITY);
@@ -422,50 +533,7 @@ int main(int argc, char** argv) {
     drain.collected.reserve(workload.size() * 2 + 1024);
     const size_t collected_cap0 = drain.collected.capacity();
 
-    // Install the fatal-signal guards BEFORE spawning the drainer or running
-    // any engine-supplied code (the drainer immediately touches the engine's
-    // transport), so a crash in either is reported as a failed run rather than
-    // killing the harness through the unguarded gap.
-    install_guards();
     std::thread drainer(drainer_main, &drain);
-
-    // Anti-cheat: snapshot the correctness-hash reference INTO MEMORY now,
-    // before the engine is loaded and initialized (let alone run). The prior
-    // structure re-read reference/correctness_hash.txt from disk at verdict
-    // time, after eng.init/the timed run/eng.shutdown had all completed — by
-    // which point an untrusted engine has had the whole run to overwrite the
-    // file with a value matching its own (possibly wrong) output and forge a
-    // PASS. The verdict later in this function is computed against this
-    // pre-run snapshot, not whatever the file contains by the time the run
-    // finishes.
-    const std::string hash_path = "reference/correctness_hash.txt";
-    const std::string want_tag =
-        scenario + "_seed" + std::to_string(seed) +
-        "_count" + std::to_string(count) + "_reports.txt";
-    // The hash file is one `<sha256>  <tag>` line per (scenario, seed). Each
-    // call reads the existing entries into a map so the file accumulates
-    // across scenarios — and a single line is still a valid file.
-    auto read_hash_file = [&hash_path]() {
-        std::map<std::string, std::string> out;
-        FILE* fp = std::fopen(hash_path.c_str(), "rb");
-        if (!fp) return out;
-        // Read line by line (fgets, not fscanf) so an over-long or malformed
-        // token cannot desync the stream and hide later valid entries, and
-        // accept an entry only when the hash is exactly 64 lowercase hex chars.
-        char line[512];
-        while (std::fgets(line, sizeof(line), fp)) {
-            char h[256], t[256];
-            if (std::sscanf(line, "%255s %255s", h, t) != 2) continue;
-            std::string hash(h);
-            if (hash.size() != 64 ||
-                hash.find_first_not_of("0123456789abcdef") != std::string::npos)
-                continue;
-            out[t] = hash;
-        }
-        std::fclose(fp);
-        return out;
-    };
-    const std::map<std::string, std::string> pre_read_hash_entries = read_hash_file();
 
     // --- run ----------------------------------------------------------------
     bool matcher_pinned = pin_to_core(matcher_core);
@@ -484,19 +552,25 @@ int main(int argc, char** argv) {
     // promises a hang is reported as failed, not just a crash.)
     alarm(RUN_TIMEOUT_S);
     eng.init(init_nonce, transport, queue);
-    // Anti-cheat: re-install the fatal-signal guards immediately after
-    // engine_init returns. An engine could call sigaction() inside
-    // engine_init to disarm SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGALRM (the last of
-    // which would also defeat the watchdog) and swallow what should be a
-    // fatal crash instead of letting the harness see it and report the run as
-    // failed. Re-asserting here closes that window for engine_init
-    // specifically. RESIDUAL: an engine that waits and re-disarms the guards
-    // from inside engine_on_*/engine_flush/engine_query_* can still race the
-    // timed loop — closing that fully would mean running the engine in an
-    // isolated child process and owning the verdict from a parent that never
-    // runs engine code, which is a larger rearchitecture than this fix
-    // attempts (see docs/ANTI_CHEAT.md).
-    install_guards();
+    // Anti-cheat: re-assert the fatal-signal guards after engine_init returns, so
+    // an engine cannot disarm them inside engine_init and swallow what should be a
+    // fatal crash. This must NOT be a blanket re-install: a managed runtime (JVM,
+    // .NET, Go) legitimately installs its own SIGSEGV/SIGBUS/SIGFPE handlers during
+    // engine_init and needs them as ordinary control flow, so overwriting them
+    // reports a healthy engine's first GC/safepoint as a crash. See
+    // reassert_guards_after_init() for exactly what is re-armed and why that still
+    // closes the disarm attack. RESIDUAL: an engine that waits and re-disarms the
+    // guards from inside engine_on_*/engine_flush/engine_query_* can still race the
+    // timed loop — closing that fully would mean running the engine in an isolated
+    // child process and owning the verdict from a parent that never runs engine
+    // code, which is a larger rearchitecture than this fix attempts (see
+    // docs/ANTI_CHEAT.md).
+    reassert_guards_after_init();
+    // engine_init may have cancelled the setup watchdog (a plain alarm(0)); re-arm
+    // it so a hang in the prebuild pass or the pre-flight queries below is still
+    // caught. (An engine can re-cancel it from a later call — the in-run RESIDUAL
+    // noted above; this closes the init-time window, which the timer alone did not.)
+    alarm(RUN_TIMEOUT_S);
     int threads_after_init = current_thread_count();
 
     // Pre-build the engine ABI struct for every message — before the timed

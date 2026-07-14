@@ -314,9 +314,29 @@ cost (for cgo, by orders of magnitude). A native engine (C/C++/Rust) needs it
 only for a small gain: batched delivery also amortizes the harness's own
 per-message dispatch — one indirect call through the `dlopen`'d symbol, ~2 ns,
 which registers only for an engine fast enough for that to matter. The comparison
-tables in the README therefore report the batched figure for
-the engines it moves materially; for every other engine the two coincide within
-measurement noise.
+tables in the README therefore report the batched figure **only where it improves an
+engine's worst-case throughput by a meaningful margin (> 0.1 M/s)**; otherwise the
+one-at-a-time figure stands. Every engine that exports `engine_on_batch` is driven
+through it — in this survey that is all the Go (cgo) engines and the Java/JNI engines
+that ship a batch adapter; where the two delivery modes differ materially the row
+states both (e.g. Exchange-core 1.40 batched vs 1.20 per-message). Batching is **not
+universally beneficial**: for a runtime
+whose per-message work already dominates and whose batch hand-off adds marshalling of
+its own, it can measure *slower* than one-at-a-time delivery — under **CPython** the
+difference came out **negative**, so the Python engines are reported on their unbatched,
+one-at-a-time figures.
+
+Two conditions have to hold for batching to help, and CPython meets neither. **The crossing has to
+be expensive to amortise — it isn't:** these adapters take the GIL once in `engine_init` and hold
+it for the whole run on a single pinned matcher thread, so there is no per-message GIL traffic to
+save (a per-call GIL would cost ~64 ns/msg; they pay none of it), and — unlike cgo/JNI — no
+thread-state switch or GC handshake; the crossing is just a `PyObject_Vectorcall` plus argument
+boxing. **The receiving runtime has to run the loop at least as fast as the caller — CPython runs
+it 10–50× slower:** the per-message dispatch that runs in C one-at-a-time (decode the 40-byte
+record, unpack six fields, call the handler, collect reports) becomes Python bytecode under
+batching (a `for` loop, `struct.iter_unpack`, an argument splat, a Python-level call,
+`list.extend`), so batching trades N C-level dispatches for one crossing plus N interpreter-level
+ones — a net loss.
 
 ## Correctness
 

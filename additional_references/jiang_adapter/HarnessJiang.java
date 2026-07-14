@@ -70,6 +70,13 @@ public final class HarnessJiang {
      *   (pad @20), maker_order_id u64 @24, taker_order_id u64 @32.            */
     private static final int TRADE_SIZE = 40;
 
+    /* Fill-record capacity of the adapter's staging buffer — MUST match
+     * jiang_adapter.cpp STAGE_CAP (the C++ side sizes the direct ByteBuffer this
+     * class writes fills into). Sized to exceed the deepest single-order sweep
+     * the harness can deliver (conformance deep_recursive_sweep_5000 = 5000 fills
+     * in one message); 4096 overflowed it. */
+    private static final int STAGE_CAP = 8192;
+
     /* Harness side: 0 = buy, 1 = sell. Engine: BID = buy, ASK = sell. */
     private static OrderAction action(int side) {
         return side == 0 ? OrderAction.BID : OrderAction.ASK;
@@ -155,6 +162,114 @@ public final class HarnessJiang {
         return onNew(orderId, seq, price, qty, side, 0);   // reinsert (rests/crosses)
     }
 
+    /* ---- batch path (api/matching_engine_api.h: engine_on_batch) -----------
+     * Process a RUN of messages in ONE JNI crossing instead of one crossing per
+     * message. inB wraps the harness's me_msg_t array (40-byte stride, tag at 0,
+     * payload at 8); outB is the adapter's report buffer, into which this side
+     * writes the COMPLETE me_report_t (64-byte) stream — the acks that
+     * jiang_adapter.cpp's emit_ack() would have written, interleaved with the
+     * trades in exactly the same order — so the C++ side only has to transport
+     * it. That batches the outbound direction too: no per-report boundary work.
+     *
+     * The loop calls the SAME onNew / onCancel / onModify handlers the
+     * per-message path calls, in array order, with NO lookahead — message i is
+     * fully matched and its reports written before message i+1 is read. The
+     * report stream is therefore byte-identical to per-message delivery.        */
+    private ByteBuffer inB, outB;
+    public void setBatchIn (ByteBuffer in)  { inB  = in.order(ByteOrder.LITTLE_ENDIAN); }
+    public void setBatchOut(ByteBuffer out) { outB = out.order(ByteOrder.LITTLE_ENDIAN); }
+
+    private static final int MSG_SIZE = 40;   // me_msg_t stride
+    private static final int REP_SHIFT = 6;   // me_report_t = 64 bytes
+    /* Worst case one message can emit: an ack + a full staging buffer of fills
+     * + an IOC-residual CancelAck. */
+    private static final int REP_RESERVE = STAGE_CAP + 2;
+
+    private int wc;                           // me_report_t records written this call
+
+    /* One me_report_t. Field offsets mirror the struct in matching_engine_api.h:
+     * type@0, side@1, sequence_number@8, order_id@16, price_ticks@24,
+     * quantity@32, maker_order_id@40, taker_order_id@48. The reserved bytes are
+     * never written — the C++ side zeroes g_outbuf once, so they stay zero,
+     * matching the value-initialized me_report_t of the per-message path. */
+    private void rep(int type, int side, long seq, long oid, long price, int qty,
+                     long maker, long taker) {
+        int o = wc << REP_SHIFT;
+        outB.put    (o,      (byte) type);
+        outB.put    (o + 1,  (byte) side);
+        outB.putLong(o + 8,  seq);
+        outB.putLong(o + 16, oid);
+        outB.putLong(o + 24, price);
+        outB.putInt (o + 32, qty);
+        outB.putLong(o + 40, maker);
+        outB.putLong(o + 48, taker);
+        wc++;
+    }
+
+    /* Turn the n fills a handler just staged in tradeBuf into Trade reports —
+     * the same conversion emit_staged_trades() does natively. Returns the total
+     * filled quantity (the IOC-residual test). */
+    private long repStagedTrades(int n) {
+        long filled = 0;
+        for (int k = 0; k < n; k++) {
+            int o = k * TRADE_SIZE;
+            long tseq   = tradeBuf.getLong(o);
+            long tprice = tradeBuf.getLong(o + 8);
+            int  tqty   = tradeBuf.getInt (o + 16);
+            long maker  = tradeBuf.getLong(o + 24);
+            long taker  = tradeBuf.getLong(o + 32);
+            rep(1 /*ME_TRADE*/, 0, tseq, 0, tprice, tqty, maker, taker);
+            filled += tqty;
+        }
+        return filled;
+    }
+
+    /** Process messages [start, n) of the batch wrapped in inB, stopping early
+     *  if outB has no room left for one more message's worst case. Returns
+     *  (messagesConsumed << 32) | reportsWritten. */
+    public long onBatch(int start, int n) {
+        wc = 0;
+        final int cap = outB.capacity() >> REP_SHIFT;
+        int i = start;
+        for (; i < n; i++) {
+            if (cap - wc < REP_RESERVE) break;          // drain and resume
+            final int  b    = i * MSG_SIZE;
+            final int  type = inB.get(b) & 0xff;
+            final long oid  = inB.getLong(b + 8);
+            final long seq  = inB.getLong(b + 16);
+            if (type == 0) {                            // NEW
+                final long price = inB.getLong(b + 24);
+                final int  qty   = inB.getInt (b + 32);
+                final int  side  = inB.get(b + 36) & 0xff;
+                final int  ioc   = inB.get(b + 37) & 0xff;
+                rep(0 /*ME_ORDER_ACK*/, side, seq, oid, price, qty, 0, 0);
+                int k = onNew(oid, seq, price, qty, side, ioc);   // same handler
+                long filled = repStagedTrades(k);
+                if (ioc == 1 && filled < qty)           // IOC residual cancellation
+                    rep(2 /*ME_CANCEL_ACK*/, side, seq, oid, price,
+                        (int) (qty - filled), 0, 0);
+            } else if (type == 1) {                     // CANCEL
+                if (onCancel(oid) != 0)                 // same handler
+                    rep(2 /*ME_CANCEL_ACK*/, lastCancelSide(), seq, oid,
+                        lastCancelPrice, 0, 0, 0);
+                else
+                    rep(4 /*ME_CANCEL_REJECT*/, 0, seq, oid, 0, 0, 0, 0);
+            } else {                                    // MODIFY = cancel + reinsert
+                final long nprice = inB.getLong(b + 24);
+                final int  nqty   = inB.getInt (b + 32);
+                final int  side   = inB.get(b + 36) & 0xff;
+                int k = onModify(oid, seq, nprice, nqty, side);   // same handler
+                if (k < 0) {                            // not resting -> reject
+                    rep(5 /*ME_MODIFY_REJECT*/, 0, seq, oid, 0, 0, 0, 0);
+                    continue;
+                }
+                repStagedTrades(k);
+                rep(3 /*ME_MODIFY_ACK*/, side, seq, oid, nprice, nqty, 0, 0);
+            }
+        }
+        return ((long) i << 32) | (wc & 0xffffffffL);
+    }
+
     /* ---- queries ---------------------------------------------------------- */
 
     /** Best (highest) bid in ticks, or Long.MIN_VALUE if there are no bids. The
@@ -184,9 +299,9 @@ public final class HarnessJiang {
      *  cancel, both match and rest, IOC residual, the miss paths, and the
      *  queries, then discards the warmed book so the run starts clean. */
     public void warmup() {
-        ByteBuffer scratch = ByteBuffer.allocateDirect(4096 * TRADE_SIZE)
+        ByteBuffer scratch = ByteBuffer.allocateDirect(STAGE_CAP * TRADE_SIZE)
                                        .order(ByteOrder.LITTLE_ENDIAN);
-        ByteBuffer saved = tradeBuf;
+        ByteBuffer savedTrade = tradeBuf, savedIn = inB, savedOut = outB;
         tradeBuf = scratch;
         long id = 1;
         final long mid = 100_000;
@@ -203,7 +318,58 @@ public final class HarnessJiang {
             onCancel(restAsk);                        // consumed above -> miss path
             onModify(restAsk, 0, mid + 2, 9, 1);      // stale modify -> miss path
         }
+
+        // Warm the BATCH loop too — the onBatch dispatch, the inB decode and the
+        // rep()/repStagedTrades() report writes are hot-path code on that arm and
+        // would otherwise compile inside the measured window. Same op mix as
+        // above, driven through onBatch off a synthetic me_msg_t buffer, so every
+        // report kind (ack / trade / IOC-residual / cancel-ack / cancel-reject /
+        // modify-ack / modify-reject) is exercised.
+        book = new OrderBook();
+        final int WMSGS = 256;
+        ByteBuffer win  = ByteBuffer.allocateDirect(WMSGS * MSG_SIZE)
+                                    .order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer wout = ByteBuffer.allocateDirect(16384 << REP_SHIFT)
+                                    .order(ByteOrder.LITTLE_ENDIAN);
+        inB = win; outB = wout;
+        for (int r = 0; r < 400; r++) {
+            win.clear();
+            for (int j = 0; j + 8 <= WMSGS; j += 8) {
+                long restBid = id++, restAsk = id++;
+                putMsg(win, j,     0, restBid, 0, mid - 1, 10, 0, 0);  // resting buy
+                putMsg(win, j + 1, 0, restAsk, 0, mid + 1, 10, 1, 0);  // resting sell
+                putMsg(win, j + 2, 2, restBid, 0, mid - 2, 12, 0, 0);  // reprice
+                putMsg(win, j + 3, 0, id++,    0, mid - 2,  7, 1, 0);  // crossing sell
+                putMsg(win, j + 4, 0, id++,    0, mid + 3, 20, 0, 1);  // IOC partial
+                putMsg(win, j + 5, 1, restBid, 0, 0,        0, 0, 0);  // live cancel
+                putMsg(win, j + 6, 1, restAsk, 0, 0,        0, 0, 0);  // miss -> reject
+                putMsg(win, j + 7, 2, restAsk, 0, mid + 2,  9, 1, 0);  // miss -> reject
+            }
+            int start = 0;
+            while (start < WMSGS) {
+                long packed = onBatch(start, WMSGS);
+                int consumed = (int) (packed >>> 32);
+                if (consumed <= start) break;
+                start = consumed;
+            }
+        }
+
         book = new OrderBook();   // discard the warmed book; start the run clean
-        tradeBuf = saved;
+        tradeBuf = savedTrade; inB = savedIn; outB = savedOut;
+    }
+
+    /** Write one me_msg_t (tag at 0, payload at 8) into a warm-up batch buffer. */
+    private static void putMsg(ByteBuffer b, int i, int type, long oid, long seq,
+                               long price, int qty, int side, int ioc) {
+        int o = i * MSG_SIZE;
+        for (int k = 0; k < MSG_SIZE; k += 8) b.putLong(o + k, 0L);
+        b.put    (o,      (byte) type);
+        b.putLong(o + 8,  oid);
+        b.putLong(o + 16, seq);
+        if (type == 1) return;                      // cancel_t stops here
+        b.putLong(o + 24, price);
+        b.putInt (o + 32, qty);
+        b.put    (o + 36, (byte) side);
+        if (type == 0) b.put(o + 37, (byte) ioc);   // new_order_t only
     }
 }

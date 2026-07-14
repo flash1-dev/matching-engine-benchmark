@@ -121,8 +121,14 @@ def challenge(spec, scenario, args):
               for j in perf + [audit]]
     consistent = len(set(hashes)) == 1
 
-    perf_ok  = all(j.get("verdict") == "VALID" for j in perf)
-    audit_ok = audit.get("verdict") == "VALID"
+    # A trial must exit 0 as well as report VALID: the harness writes its result
+    # JSON before the final transport->destroy()/dlclose(), so an engine that
+    # crashes on teardown leaves a VALID JSON behind yet exits non-zero. Treat any
+    # non-zero return as not-OK regardless of the JSON verdict.
+    perf_ok  = all(j.get("verdict") == "VALID" and j.get("_returncode", 0) == 0
+                   for j in perf)
+    audit_ok = (audit.get("verdict") == "VALID"
+                and audit.get("_returncode", 0) == 0)
     valid    = perf_ok and audit_ok and consistent
 
     a = audit.get("audit", {})
@@ -244,6 +250,9 @@ def main():
     ap.add_argument("--matcher-core", type=int, help="pin the matcher thread")
     ap.add_argument("--drainer-core", type=int, help="pin the drainer thread")
     args = ap.parse_args()
+    if args.perf_runs < 1:
+        ap.error("--perf-runs must be >= 1 (a challenge needs at least one timed run; "
+                 "0 would report a contradictory 'no measurement' + VALID)")
 
     if not os.path.exists(HARNESS):
         sys.exit("error: ./harness is not built — run `make` first")
@@ -253,6 +262,20 @@ def main():
     scenarios = (SCENARIOS if (args.all_scenarios or not args.scenario)
                  else [args.scenario])
     engines = args.compare if args.compare else [args.engine or args.baseline]
+    # Reject a label collision up front: engine_label() strips the directory and
+    # the _adapter.so suffix, so two --compare arguments with the same basename
+    # from different directories (e.g. an as-shipped vs a fixed build) would key to
+    # the same grid cell and overwrite each other — silently laundering one's crash
+    # into the other's VALID row.
+    if len(engines) > 1:
+        seen = {}
+        for e in engines:
+            lbl = engine_label(e)
+            if lbl in seen:
+                sys.exit(f"error: --compare arguments '{seen[lbl]}' and '{e}' both "
+                         f"reduce to the label '{lbl}'; their results would collide "
+                         f"— rename one or run them separately.")
+            seen[lbl] = e
 
     print(f"Challenge: {args.perf_runs} perf runs + 1 audit run per scenario\n")
     grid = {}
@@ -283,16 +306,27 @@ def main():
             if not invalid:
                 print("  Verdict: VALID on all five scenarios")
             else:
-                # Distinguish a crash/no-output scenario from a genuine hash
-                # divergence — a crash never produced output to diverge.
+                # Report the actual cause per scenario, not a blanket "diverges":
+                # a crash produced no output, a book-state audit failure is a wrong
+                # book (not a wrong report stream), and inconsistent hashes are
+                # nondeterminism — each is a distinct failure.
                 crashed = [s for s in invalid if grid[(lbl, s)]["median"] is None]
-                diverged = [s for s in invalid if s not in crashed]
                 reasons = []
                 if crashed:
                     reasons.append("crashed/no valid measurement on "
                                     + ", ".join(crashed))
-                if diverged:
-                    reasons.append("output diverges on " + ", ".join(diverged))
+                buckets = {}
+                for s in invalid:
+                    if s in crashed:
+                        continue
+                    c = grid[(lbl, s)]
+                    why = ("inconsistent hashes" if c["correct"] == "INCONSISTENT"
+                           else "output diverges" if c["correct"] == "FAIL"
+                           else "book-state audit fails" if c["audit"] == "FAIL"
+                           else "invalid")
+                    buckets.setdefault(why, []).append(s)
+                for why, ss in buckets.items():
+                    reasons.append(f"{why} on " + ", ".join(ss))
                 print("  Verdict: INVALID — " + "; ".join(reasons))
     else:
         for s in scenarios:

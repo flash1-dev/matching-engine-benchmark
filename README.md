@@ -148,6 +148,9 @@ paper's §2.*[^paper]
 **Scope.** A single matching engine on one symbol, driven one message at a time through ~2.0M
 new/cancel/modify messages (an optional `engine_on_batch` entry point amortises the boundary
 cost for engines behind a language runtime — the per-message processing is unchanged). The
+comparison tables report an engine's batched figure only where it improves worst-case throughput
+by a meaningful margin (> 0.1 M/s); where batching is neutral or slower — as it measured for
+CPython — the one-at-a-time figure stands. The
 engine emits its own report stream (OrderAck / Trade / CancelAck / ModifyAck / CancelReject /
 ModifyReject) over an inter-thread transport drained on an adjacent core, so the measured
 throughput includes the matcher-to-publisher hand-off a real exchange pays. Multi-core

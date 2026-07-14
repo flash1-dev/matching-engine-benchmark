@@ -269,7 +269,7 @@ EDGE_CASES = {
     # maker's price, so the two are different numbers and a bug prints a
     # different, checkable price: a resting BUY repriced UP past a resting
     # SELL (to 105, past the SELL's 100), and — mirrored — a resting SELL
-    # repriced DOWN past a resting BUY (to 95, past the BUY's 100), must both
+    # repriced DOWN past a resting BUY (to 195, past the BUY's 200), must both
     # trade at the UNTOUCHED counterparty's (maker's) price, not at the
     # modified order's own more-aggressive new limit (modify-fills-at-own-
     # limit -- the modify-path sibling of taker_price_both_directions, which
@@ -330,41 +330,53 @@ def run_audit(so, scen, count):
 def _so_exists(p):
     return os.path.exists(p if os.path.isabs(p) else os.path.join(REPO, p))
 
-def _require_so(paths, what):
+def _require_so(paths, what, remedy):
     missing = [p for p in paths if not _so_exists(p)]
     if missing:
         sys.exit(f"ERROR: {what} not found: {missing}. The gate cannot form a "
-                 f"consensus without them — build the three oracle adapters "
-                 f"(cpp_orderbook / llc993 / hroptatyr_clob, each in "
-                 f"additional_references/<name>_adapter/build.sh), and pass an "
-                 f"engine .so that exists.")
+                 f"consensus without them — {remedy}, and pass an engine .so that "
+                 f"exists.")
+
+def _require_report_oracles():
+    _require_so(BASELINES.values(), "oracle baseline adapter(s)",
+                "build the three oracle adapters (cpp_orderbook / llc993 / "
+                "hroptatyr_clob, each via additional_references/<name>_adapter/build.sh)")
+
+def _require_state_audit_baselines():
+    _require_so(STATE_AUDIT_BASELINES,
+                "state-audit baseline adapter(s) (harness --mode audit needs these to "
+                "gate the book-state dimension; without them every case silently falls "
+                "back to report-hash-only checking)",
+                "build them with `make baselines` (scripts/build_baselines.sh liquibook quantcup)")
 
 def _oracle_sig():
-    # Binds the cache to the exact case set + oracle baselines it was computed
-    # for, so a stale cache (e.g. from an earlier session, after `make clean`
-    # deleted the .bin files) is rejected rather than trusted (finding I).
-    # Also binds it to whether the harness's own state-audit baselines
-    # (liquibook / quantcup) were present: state_gated was computed by
-    # actually running those audits (see run_audit/STATE_AUDIT_BASELINES
-    # above), so a cache built while they existed must not be trusted once
-    # they've been removed — their audits would now silently SKIP, and the
-    # cached state_gated=True flags would misreport "book state on N cases"
-    # for a session that actually ran zero state audits.
-    state_audit_present = tuple(_so_exists(p) for p in STATE_AUDIT_BASELINES)
+    # Binds the cache to everything the cached consensus was computed from, so a
+    # stale cache is rejected rather than trusted: the exact case set, AUDIT_POINTS
+    # (state_gated is computed as count <= AUDIT_POINTS), and every oracle /
+    # state-audit baseline's mtime. The mtime (None when the .so is absent) captures
+    # both presence AND version — a rebuilt oracle changes it, and a cache built
+    # while liquibook/quantcup existed is not trusted once they are removed (their
+    # audits would now silently SKIP and the cached state_gated=True flags would
+    # misreport "book state on N cases" for a run that did zero state audits).
+    def _stamp(p):
+        full = p if os.path.isabs(p) else os.path.join(REPO, p)
+        try:
+            return os.path.getmtime(full)
+        except OSError:
+            return None
+    oracle_stamps = tuple(_stamp(p) for p in
+                          list(BASELINES.values()) + list(STATE_AUDIT_BASELINES))
     return hashlib.sha256(
         (repr(sorted(EDGE_CASES.items())) + repr(sorted(BASELINES.items()))
-         + repr(state_audit_present)).encode()
+         + repr(AUDIT_POINTS) + repr(oracle_stamps)).encode()
     ).hexdigest()
 
 def consensus(write_bins=True):
-    _require_so(BASELINES.values(), "oracle baseline adapter(s)")
-    _require_so(STATE_AUDIT_BASELINES, "state-audit baseline adapter(s) "
-                "(harness --mode audit needs these to gate the book-state "
-                "dimension; without them every case silently falls back to "
-                "report-hash-only checking)")
     """Write each case's .bin, compute the oracle (report-stream hash + book-state
     audit consensus), cache it, and return {case: (scen, count, hash_or_None,
     per_oracle, state_gated)}."""
+    _require_report_oracles()
+    _require_state_audit_baselines()
     out = {}
     for case, msgs in EDGE_CASES.items():
         scen, count = scen_name(case), len(msgs)
@@ -430,16 +442,17 @@ def main():
               + (f"  (ungated: {ungated})" if ungated else ""))
         return
     so = sys.argv[1]
-    _require_so([so], "engine .so")
-    # Required unconditionally, BEFORE the cache short-circuit below: a cached
-    # oracle (load_oracle()) never calls consensus(), so without this the
-    # state-audit-baselines check inside consensus() would simply never run
-    # for a cache-hit invocation, and a stale cache's state_gated flags (see
-    # _oracle_sig) would be trusted even with liquibook/quantcup absent.
-    _require_so(STATE_AUDIT_BASELINES, "state-audit baseline adapter(s) "
-                "(harness --mode audit needs these to gate the book-state "
-                "dimension; without them every case silently falls back to "
-                "report-hash-only checking)")
+    _require_so([so], "engine .so", "pass a path to a built engine adapter .so")
+    # Required unconditionally, BEFORE the cache short-circuit below, because a
+    # cache-hit path (load_oracle()) never calls consensus() and so would never
+    # reach the same check inside it. This makes the gate FAIL EARLY with a clear
+    # "build the baselines" error instead of the roundabout path it would take
+    # otherwise (absent baselines → _oracle_sig sees mtime None → signature
+    # mismatch → load_oracle() returns None → the consensus() fallback hits its own
+    # require) — same safe outcome, but this is the legible one. It is also
+    # defense-in-depth for _oracle_sig: both now bind the state-audit baselines, so
+    # a stale cache can never be trusted with liquibook/quantcup absent.
+    _require_state_audit_baselines()
     # Reuse a cached oracle (built by a prior `--consensus` run) so a parallel
     # sweep neither re-runs the baselines nor rewrites the .bin files under each
     # other; fall back to computing inline for a standalone single-engine check.

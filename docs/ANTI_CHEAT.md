@@ -199,9 +199,16 @@ was measured on.
 ## Defensive execution
 
 Engine calls run under `SIGSEGV` / `SIGABRT` / `SIGBUS` / `SIGFPE` handlers and
-an `alarm()` watchdog, re-installed immediately after `engine_init` so an engine
-cannot quietly disarm them during setup. An engine that crashes or hangs is
-reported as failed rather than taking the harness down with it.
+an `alarm()` watchdog. After `engine_init` the harness re-arms `SIGALRM` and
+`SIGABRT` unconditionally, but re-arms `SIGSEGV` / `SIGBUS` / `SIGFPE` **only where
+the engine left them at default or ignored**: a managed runtime (HotSpot, .NET, Go)
+legitimately owns those as ordinary control flow — on AArch64 HotSpot polls
+safepoints and compiles null checks as trapping loads — so re-installing over its
+handlers would turn a healthy JVM's first safepoint into a bogus "engine crashed".
+The guards installed *before* `engine_init` still do the real work: a runtime that
+keeps its own handler chains a genuine, non-runtime fault straight back to the
+harness. An engine that crashes or hangs is reported as failed rather than taking
+the harness down with it.
 
 These guards catch an engine that *accidentally* crashes or hangs — they are not
 a sandbox. The engine is loaded in-process and shares the harness's address space

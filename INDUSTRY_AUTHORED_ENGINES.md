@@ -102,9 +102,9 @@ it is not counted in the 52.
 | tembolo ‡ | C | a quantitative developer at Tradeweb | with fix | 1.475 (swing-25) | two capacity ceilings (8192-order pool silent-drop + 512 price-level abort) [#1](https://github.com/tembolo1284/matching-engine-c/issues/1) |
 | koral ‡ | C++ | a Coinbase software-engineering intern | as shipped | 1.255 (normal) | FIX exchange (clean; thread-affinity plumbing only) |
 | ironcrypto ‡ | Rust | self-described 'TradFi/DeFi Quant' | with fix | 1.04 (6.2 normal) | no-license; adapter restores engine's removed cancel impl (faithfulness caveat) |
+| javalob ‡ | Java | Ash Booth (JPMorgan) | as shipped | 1.03 (swing-40) | teaching LOB (clean); worst case with bidirectional `engine_on_batch` (per-message 0.86) |
 | trusted ‡ | Rust | a KRX market-maker at IBK Securities | with fix | 0.925 (static) | latent bid-side market-order double-subtract underflow [#9](https://github.com/JunbeomL22/trusted/issues/9) |
 | kennethzhang ‡ | C++ | a Squarepoint quant researcher | with fix | 0.86 (static) | price the limit-vs-limit cross at the resting maker, not the taker (the adapter normalizes it today) [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1) |
-| javalob ‡ | Java | Ash Booth (JPMorgan) | as shipped | 0.86 (swing-40) | teaching LOB (clean) |
 | swirly ‡ | Java | a trading-systems developer; co-founder of Reactive Markets | as shipped | 0.79 (swing-40) | clean — native revise changes only lots, so modify = cancel+reinsert per contract |
 | damian ‡ | Kotlin | Damian Howard (20y at a bank) | as shipped | 0.38 (static) | clean |
 | pyob ‡ | Python | an FX e-trading quant at mBank | with fix | 0.30 (swing-25) | deque IndexError on a full fill + stale best_price after cancel [#1](https://github.com/wegar-2/pyob/issues/1) |
