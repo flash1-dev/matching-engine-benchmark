@@ -250,7 +250,7 @@ Q. Isn't a fast matching engine easy to build?
 
 A. This question conflates implementing a fast matcher with inveting one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is several times faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
 
-Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and faster hardware buy — and **nothing occupies the ~25 M/s above it**. FlashOne reaches **33.20 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 4× margin is not what implementation tweaks accumulate to.
+Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~25 M/s above it**. FlashOne reaches **33.20 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 4× margin is not what implementation tweaks accumulate to.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
