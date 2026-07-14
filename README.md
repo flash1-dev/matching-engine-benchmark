@@ -19,8 +19,8 @@ diverge, cannot finish their slowest scenario within the message budget, or cras
 ([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
 
 The consensus oracle is also a bug-finder: across the 247 engines tested, wherever it surfaced a
-correctness defect we drafted a fix and reported it, respectfully: **181 GitHub issues filed
-upstream** across 167 projects — **18 already fixed** by their maintainers, none declined
+correctness defect, we drafted a fix and reported it, respectfully: **181 GitHub issues filed
+upstream** — **18 of those filed issues already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
 **This repo ranks pinned commits on one workload. No number or finding in it ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
