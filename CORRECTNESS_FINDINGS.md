@@ -7,8 +7,7 @@ of any divergence, and the upstream issue filed for it. The conformance vocabula
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the pre-run gate in
 [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-Wherever the harness surfaced a correctness defect we drafted a fix and reported it respectfully — mechanism, reproduction, suggested patch: **181 GitHub issues are filed upstream** where a single GitHub issue sometimes contains up to 5 distinct defects (**18 of those filed issues are already fixed** by the maintainers, and none of the filed issues so far were declined, marked *wontfix*, or closed as not-planned — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)); a few were
-unfileable (repo archived / issues disabled). The per-engine status is:
+Wherever the harness surfaced a reportable finding we drafted a fix and reported it respectfully — mechanism, reproduction, suggested patch: **181 GitHub issues are filed upstream**, together reporting **more than 250 distinct findings** (a single issue sometimes bundles up to five). **18 of those filed issues are already fixed** by the maintainers, and none so far were declined, marked *wontfix*, or closed as not-planned — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md); a few findings were unfileable (repo archived / issues disabled). The per-engine status is:
 
 | | engines |
 |:--|--:|
@@ -17,7 +16,7 @@ unfileable (repo archived / issues disabled). The per-engine status is:
 | conform as shipped, surfaced defect since resolved upstream | **3** |
 | conform as shipped, no correctness defect (43 fully clean, 4 with a perf/build/off-scope note) | **47** |
 
-**We publish no count of "buggy" engines, and no total defect count.** Non-conforming is not the
+**We count findings, not engines: we publish no ranking or count of "buggy" engines.** Non-conforming is not the
 same as defective: an engine may fail to reproduce the consensus because it implements a
 deliberate design choice — a documented alternative pricing convention, an on-chain per-call gas
 cap, a restricted price domain — or because it is byte-identical wherever it completes and is
