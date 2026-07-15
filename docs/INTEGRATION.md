@@ -205,6 +205,25 @@ regenerate via `./harness --baseline liquibook --scenario normal --write-referen
 to find the first divergent report (the line format is in
 `docs/METHODOLOGY.md`).
 
+The harness can export any engine's canonical report stream after the timed run
+without modifying the protected consensus artifacts:
+
+```sh
+./harness --engine ./my_engine_adapter.so --scenario normal --mode perf \
+  --write-canonical-output /tmp/my_engine_normal.txt
+
+scripts/explain_divergence.py \
+  reference/canonical_output.txt.gz \
+  /tmp/my_engine_normal.txt \
+  --json-output /tmp/my_engine_divergence.json
+```
+
+`explain_divergence.py` streams reports grouped by originating sequence,
+reports the first differing group, and exits `1` on divergence. The optional
+versioned JSON artifact contains the reference and candidate reports at that
+sequence for CI or downstream failure-reduction tools. Export happens after the
+timed matcher window and neither operation changes the correctness oracle.
+
 Run the pre-run conformance gate before benchmarking:
 `scripts/conformance_check.py ./<engine>_adapter.so` (see
 [`docs/CONFORMANCE.md`](CONFORMANCE.md)).
