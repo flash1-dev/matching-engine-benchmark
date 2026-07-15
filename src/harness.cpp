@@ -37,6 +37,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <map>
 #include <random>
 #include <string>
@@ -152,6 +153,24 @@ static_assert(sizeof(PreparedMsg) == sizeof(me_msg_t),
 bool file_exists(const std::string& p) {
     struct stat st;
     return stat(p.c_str(), &st) == 0;
+}
+
+bool path_is_under_reference(const std::string& raw_path) {
+    std::error_code error;
+    const std::filesystem::path reference =
+        std::filesystem::weakly_canonical("reference", error);
+    if (error) return true;
+    const std::filesystem::path output =
+        std::filesystem::weakly_canonical(raw_path, error);
+    if (error) return true;
+
+    auto reference_part = reference.begin();
+    auto output_part = output.begin();
+    for (; reference_part != reference.end(); ++reference_part, ++output_part) {
+        if (output_part == output.end() || *reference_part != *output_part)
+            return false;
+    }
+    return true;
 }
 
 /* ---- the drainer thread -------------------------------------------------- */
@@ -365,9 +384,11 @@ bool load_workload(const std::string& path, std::vector<WorkloadMsg>& out) {
 /* ========================================================================= */
 int main(int argc, char** argv) {
     std::string engine_arg, baseline, scenario = "normal";
+    std::string canonical_output_path;
     uint64_t seed = 23, count = 1000000;   // 23 = the canonical seed (docs/METHODOLOGY.md)
     int matcher_core = 2, drainer_core = 3;
     bool write_reference = false;
+    bool canonical_output_requested = false;
     Mode mode = Mode::PERF;
 
     for (int i = 1; i < argc; ++i) {
@@ -383,6 +404,10 @@ int main(int argc, char** argv) {
         else if (a == "--matcher-core") matcher_core = std::atoi(next().c_str());
         else if (a == "--drainer-core") drainer_core = std::atoi(next().c_str());
         else if (a == "--write-reference") write_reference = true;
+        else if (a == "--write-canonical-output") {
+            canonical_output_requested = true;
+            canonical_output_path = next();
+        }
         else if (a == "--mode") {
             std::string m = next();
             if (m == "perf")       mode = Mode::PERF;
@@ -398,7 +423,23 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
             "usage: %s (--engine <path.so> | --baseline <name>) "
             "[--scenario s] [--mode perf|audit] [--seed n] [--count n] "
-            "[--write-reference]\n", argv[0]);
+            "[--write-reference] [--write-canonical-output <path>]\n", argv[0]);
+        return 2;
+    }
+    if (canonical_output_requested && canonical_output_path.empty()) {
+        std::fprintf(stderr, "--write-canonical-output requires a non-empty path\n");
+        return 2;
+    }
+    if (write_reference && !canonical_output_path.empty()) {
+        std::fprintf(stderr,
+            "--write-reference and --write-canonical-output are mutually exclusive\n");
+        return 2;
+    }
+    if (!canonical_output_path.empty() &&
+        path_is_under_reference(canonical_output_path)) {
+        std::fprintf(stderr,
+            "--write-canonical-output refuses paths under reference/; "
+            "candidate output must not overwrite consensus artifacts\n");
         return 2;
     }
     if (write_reference && baseline.empty()) {
@@ -766,6 +807,18 @@ int main(int argc, char** argv) {
     // captured before eng.init (see above) — the anti-cheat pre-read.
     std::string computed = compute_canonical_hash(drain.collected);
     std::string expected, status;
+    bool canonical_output_ok = true;
+
+    // Forensic export for any engine under test. This happens after the timed
+    // run and after the canonical hash is computed; it never mutates the
+    // protected consensus hash or canonical reference output.
+    if (!canonical_output_path.empty()) {
+        canonical_output_ok =
+            write_canonical_output(drain.collected, canonical_output_path);
+        if (!canonical_output_ok)
+            std::fprintf(stderr, "ERROR: could not write canonical output to %s: %s\n",
+                         canonical_output_path.c_str(), std::strerror(errno));
+    }
 
     if (write_reference) {
         mkdir("reference", 0755);
@@ -868,7 +921,8 @@ int main(int argc, char** argv) {
     bool report_buffer_ok = (drain.collected.capacity() == collected_cap0);
     bool valid          = correctness_ok && audit_ok && affinity_ok
                           && prestart_book_empty && prebuild_time_ok
-                          && report_buffer_ok && probe_time_ok;
+                          && report_buffer_ok && probe_time_ok
+                          && canonical_output_ok;
 
     // --- report -------------------------------------------------------------
     std::printf("  Messages processed: %zu\n", workload.size());
@@ -925,6 +979,8 @@ int main(int argc, char** argv) {
     if (!expected.empty()) std::printf("  Expected hash: %s\n", expected.c_str());
     std::printf("  Computed hash: %s\n", computed.c_str());
     std::printf("  Status: %s\n", status.c_str());
+    if (!canonical_output_path.empty() && canonical_output_ok)
+        std::printf("  Canonical output: %s\n", canonical_output_path.c_str());
 
     if (mode == Mode::AUDIT) {
         std::printf("\nAnti-cheat state audit:\n");

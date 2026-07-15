@@ -118,6 +118,16 @@ To benchmark your own engine algorithm, implement the C ABI in
 
 See `docs/INTEGRATION.md`.
 
+On a correctness failure, export the candidate's canonical report stream and
+localize the first differing sequence without changing the consensus reference:
+
+```sh
+./harness --engine /path/to/your_engine.so --scenario normal --mode perf \
+  --write-canonical-output /tmp/candidate.txt
+scripts/explain_divergence.py reference/canonical_output.txt.gz /tmp/candidate.txt \
+  --json-output /tmp/divergence.json
+```
+
 Compare engines on your own platform:
 
 ```sh
