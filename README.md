@@ -23,7 +23,7 @@ reportable finding we drafted a fix and reported it, respectfully: **181 GitHub 
 upstream** — **18 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
-**This repo ranks pinned commits on one workload. No number or finding in it ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
+**No number or finding in it ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
 
 The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
@@ -122,7 +122,7 @@ Compare engines on your own platform:
 
 ```sh
 scripts/build_baselines.sh all
-scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ranking
+scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ordering
 ```
 
 ## Why worst-case throughput
@@ -173,7 +173,7 @@ conforming field.
 replays the workload through a baseline engine and probes order-book state at random points;
 every run probes the same points, so an engine cannot tell a measured run from an audited
 one (`docs/ANTI_CHEAT.md`). By default all five scenarios run and the engine's worst case is
-reported (`--scenario` narrows; `--compare` ranks).
+reported (`--scenario` narrows; `--compare` orders by worst case).
 
 **Pre-run conformance gate.** Before any timed run, each engine passes a battery of **34
 hand-crafted edge cases**, reverse-engineered from latent bugs found across the survey, plus a

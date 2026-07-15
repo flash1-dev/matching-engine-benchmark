@@ -17,6 +17,15 @@ published figures are unchanged) unless noted otherwise.
 | [film42/rinok](#film42rinok--buy-side-maker-mispricing) | buy-side maker mispricing | [#2](https://github.com/film42/rinok/issues/2) | 2026-06-28 | "I think you nailed the issue. I added more tests and this is now passing." |
 | [yihuang/pyorderbook](#yihuangpyorderbook--cancel_order-keyerror-on-an-emptied-price-level) | `cancel_order` KeyError on an emptied price level | [#1](https://github.com/yihuang/pyorderbook/issues/1) | 2026-06-28 | "thanks for reporting" |
 | [dx1ngy/trading](#dx1ngytrading--fills-priced-at-the-sell-orders-price-not-the-makers) | fills priced at the sell order's price, not the maker's | [#1](https://github.com/dx1ngy/trading/issues/1) | 2026-06-29 | "the reproduction, root-cause analysis, and diff are all clear" |
+| [Capitalisk/big-order-book](#capitaliskbig-order-book--fully-filled-maker-left-in-the-order-map) | a fully-filled maker is left in the order map (`has`/`get` still see it resting) | [#1](https://github.com/Capitalisk/big-order-book/issues/1) | 2026-06-29 | "The fix has been implemented and published in `v2.0.2` … a test case added." |
+| [QuantTradingWithLi/high_perf_order_matching](#quanttradingwithlihigh_perf_order_matching--full-price-domain-scan-defeats-the-occupancy-bitsets) | every order scans the whole price domain, so the occupancy bitsets never accelerate matching | [#1](https://github.com/QuantTradingWithLi/high_perf_order_matching/issues/1) | 2026-07-01 | "I have applied your suggested fix to optimize the price-domain scan." |
+| [joaquinbejar/hft-clob-core](#joaquinbejarhft-clob-core--lose-priority-modify-rests-a-crossed-book) | a lose-priority modify that reprices through the spread rests a crossed book instead of trading | [#59](https://github.com/joaquinbejar/hft-clob-core/issues/59) | 2026-07-08 | "verified the repro against `3a37930` … confirmed both the mechanism and the reach." |
+| [khrapovs/OrderBookMatchingEngine](#khrapovsorderbookmatchingengine--filled-orders-never-leave-the-expiration-index) | filled orders never leave `orders_by_expiration` (unbounded growth; a stale entry can evict a live re-used id) | [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25) | 2026-07-01 | "Huge thank you … and the fix itself! Released." |
+| [prystupa/scala-cucumber-matching-engine](#prystupascala-cucumber-matching-engine--fastlist-drops-an-element-appended-after-a-tail-remove) | `FastList` silently drops an element appended after a tail-remove (`lastEntry` left stale) | [#6](https://github.com/prystupa/scala-cucumber-matching-engine/issues/6) | 2026-07-05 | "a genuinely exemplary bug report — pinned commit, minimal repro." |
+| [robaho/cpp_orderbook](#robahocpp_orderbook--trades-print-at-the-aggressor-price) | trades print at the aggressor price, not the resting maker price | [#2](https://github.com/robaho/cpp_orderbook/issues/2) | 2026-06-30 | "Fixed in version 1.1." |
+| [robaho/go-trader](#robahogo-trader--modify-of-a-fully-filled-order-is-accepted) | `ModifyOrder` accepts a modify of a fully-filled order instead of rejecting it | [#23](https://github.com/robaho/go-trader/issues/23) | 2026-06-30 | "fixed in 1.4.11 … I added several test cases." |
+| [sadhbh-c0d3/cpp20-orderbook](#sadhbh-c0d3cpp20-orderbook--touch-price-order-never-crosses-and-an-empty-book-deref) | an order at the exact touch price never crosses, and the opposite-side guard dereferences an empty book | [#6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6) | 2026-07-09 | "You were right in both cases." |
+| [silue-dev/limit-order-book-market-making](#silue-devlimit-order-book-market-making--one-sided-book-crashes-add_order) | a trade that leaves the book one-sided crashes `add_order` with a `TypeError` (`get_pnl` × `None` mid) | [#1](https://github.com/silue-dev/limit-order-book-market-making/issues/1) | 2026-07-03 | "Your analysis was right … I've fixed it." |
 
 The full analysis and resolution record for each follows.
 
@@ -319,3 +328,75 @@ resting bid printed at the aggressor's lower price instead of the resting maker'
 a price-time-priority (maker-price) violation. Matching, FIFO, and quantities were
 otherwise consensus-correct (a conforming engine, with fix), VALID with the one-line
 maker-price correction.
+
+## Capitalisk/big-order-book — fully-filled maker left in the order map
+
+**Status — RESOLVED upstream (2026-06-29).** Reported as Capitalisk/big-order-book [issue #1](https://github.com/Capitalisk/big-order-book/issues/1); the maintainer implemented the fix and shipped it in `v2.0.2` with a regression test, replying *"thank you for this detailed report."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+A fully-filled maker order was never removed from `orderItemMap`, so `has`/`get` reported it as still resting and a later `remove` of that id threw — book occupancy diverged from the consensus.
+
+## QuantTradingWithLi/high_perf_order_matching — full-price-domain scan defeats the occupancy bitsets
+
+**Status — RESOLVED upstream (2026-07-01).** Reported as QuantTradingWithLi/high_perf_order_matching [issue #1](https://github.com/QuantTradingWithLi/high_perf_order_matching/issues/1); the maintainer applied the suggested fix, replying *"thank you for your thoughtful contribution and for sharing the timing harness."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+Each order scanned the entire price domain (`O(MAX_PRICE_RANGE)`), so the occupancy bitsets that were meant to accelerate best-price lookup never did — a performance finding, not a correctness defect (the output was consensus-correct).
+
+## joaquinbejar/hft-clob-core — lose-priority modify rests a crossed book
+
+**Status — RESOLVED upstream (2026-07-08).** Reported as joaquinbejar/hft-clob-core [issue #59](https://github.com/joaquinbejar/hft-clob-core/issues/59); the maintainer verified the reproduction against the pinned commit and confirmed the mechanism, replying *"thanks for the exceptionally thorough report."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+`Book::replace`'s lose-priority path never re-matched: a modify that repriced through the spread rested a crossed book instead of trading through it, leaving locked/crossed state the consensus never produces.
+
+## khrapovs/OrderBookMatchingEngine — filled orders never leave the expiration index
+
+**Status — RESOLVED upstream (2026-07-01).** Reported as khrapovs/OrderBookMatchingEngine [issue #25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25); the maintainer took the suggested fix and cut a release, replying *"huge thank you for such a detailed bug report and the fix itself."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+Fully-filled resting orders were never removed from `orders_by_expiration`, so the index grew without bound and a stale entry could evict a live, re-used-id order at expiry — a correctness hazard on the expiry path.
+
+## prystupa/scala-cucumber-matching-engine — FastList drops an element appended after a tail-remove
+
+**Status — RESOLVED upstream (2026-07-05).** Reported as prystupa/scala-cucumber-matching-engine [issue #6](https://github.com/prystupa/scala-cucumber-matching-engine/issues/6); the maintainer confirmed and fixed it, replying *"thank you for a genuinely exemplary bug report — pinned commit, minimal repro."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+In `FastList`, appending after removing the tail via `removeInto` silently dropped the new element because `lastEntry` was left stale — orders could vanish from a price level without a trace.
+
+## robaho/cpp_orderbook — trades print at the aggressor price
+
+**Status — RESOLVED upstream (2026-06-30).** Reported as robaho/cpp_orderbook [issue #2](https://github.com/robaho/cpp_orderbook/issues/2); the maintainer fixed it in version 1.1, replying *"thanks for reporting."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+Every fill printed at the incoming aggressor's price rather than the resting maker's — a price-time-priority (maker-price) violation; matching and quantities were otherwise consensus-correct.
+
+## robaho/go-trader — modify of a fully-filled order is accepted
+
+**Status — RESOLVED upstream (2026-06-30).** Reported as robaho/go-trader [issue #23](https://github.com/robaho/go-trader/issues/23); the maintainer fixed it in 1.4.11 and, prompted by the report, found *"several problems related to modifying orders"* and added test cases — a single finding that surfaced more. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+`ModifyOrder` accepted a modify targeting an order that had already fully filled, instead of rejecting it — the acknowledgment stream then diverged from the consensus.
+
+## sadhbh-c0d3/cpp20-orderbook — touch-price order never crosses, and an empty-book deref
+
+**Status — RESOLVED upstream (2026-07-09).** Reported as sadhbh-c0d3/cpp20-orderbook [issue #6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6); the maintainer confirmed both mechanisms and fixed them, replying *"thank you for finding this … you were right in both cases."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+In `match_order`, an order at the exact touch price never crossed (a strict-inequality price test), and the opposite-side guard dereferenced an empty book — two distinct defects, one a lost trade and one a crash.
+
+## silue-dev/limit-order-book-market-making — one-sided book crashes add_order
+
+**Status — RESOLVED upstream (2026-07-03).** Reported as silue-dev/limit-order-book-market-making [issue #1](https://github.com/silue-dev/limit-order-book-market-making/issues/1); the maintainer confirmed the root cause and fixed it, replying *"thank you very much for the detailed report, the reproduction, and the clear root-cause writeup."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+A trade that emptied one side of the book crashed the next `add_order` with a `TypeError`: `get_pnl` multiplied a position by a `None` mid-price when no two-sided mid existed.
