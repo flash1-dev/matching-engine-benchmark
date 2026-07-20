@@ -20,10 +20,10 @@ diverge, cannot finish their slowest scenario within the message budget, or cras
 
 The consensus oracle is also a bug-finder: across the 247 engines tested, wherever it surfaced a
 reportable finding we drafted a fix and reported it, respectfully: **181 GitHub issues filed
-upstream** — **18 already fixed** by their maintainers, none declined
+upstream** for +250 distinct findings — **18 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
-**No number or finding in it ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
+**No number or finding in any document in this repo ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
 
 The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
