@@ -20,7 +20,7 @@ diverge, cannot finish their slowest scenario within the message budget, or cras
 
 The consensus oracle is also a bug-finder: across the 247 engines tested, wherever it surfaced a
 reportable finding we drafted a fix and reported it, respectfully: **181 GitHub issues filed
-upstream** for +250 distinct findings — **18 already fixed** by their maintainers, none declined
+upstream** for +250 distinct findings — **25 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
 **No number or finding in any document in this repo ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
@@ -37,15 +37,15 @@ project's current code or its authors' engineering quality.
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
 | FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
-| e820 / weekend-orderbook | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
+| e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
-| CppTrader (1041★) | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
+| CppTrader (1041★) ‡ | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42); author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) |
 | raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
+| llc993 (154★) | Rust | as shipped | 7.14 (swing-25) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
 | ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: an ex-Citadel Securities engineer (17y in HFT) |
 | matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
-| chronex | C++ | with fix | 6.47 | — | MIT; FOK/AON makers fill at aggressor price [#1](https://github.com/OsamaAhmad00/ChroneX/issues/1) |
 
 See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of
 all **160** conforming engines.
@@ -55,7 +55,7 @@ all **160** conforming engines.
 Every conforming engine, classified by the data structure it uses to order price levels — the core
 algorithmic choice in a FIFO matcher. The figure is the best worst-case throughput any engine reached
 with that structure: an upper bound, since language and implementation confound a pure structural
-comparison (every leader is C, C++, or Rust).
+comparison (every leader above ~2 M/s is C, C++, or Rust).
 
 | Book structure (price ladder) | Fastest engine | Lang | Worst-case M/s | Engines | Notes |
 |:--|:--|:--|--:|--:|:--|
@@ -76,24 +76,13 @@ comparison (every leader is C, C++, or Rust).
 ### Latency under burst load
 
 Throughput is what an exchange measures internally; what a trader experiences when the market
-moves is **latency**, and latency under load is a property of headroom. This table stress-tests
-five high-throughput conforming engines, each in **its own weakest scenario**, at offered loads
-in the documented microburst range (5–12 M msg/s).[^t7] **All values are nanoseconds,
-P50 / P99.** 
-
-| Engine | Weakest scenario | 5 M/s | 8 M/s | 12 M/s |
-|:-------|:-----------------|:------|:------|:-------|
-| FlashOne  | normal       | 354 / 534   | 363 / 568   | 383 / 623 |
-| cpp-orderbook | swing-25     | 363 / 2,190     | 457 / 3,309     | 21,400,000 / 33,100,000 † |
-| CppTrader     | normal       | 387 / 1,984     | 658 / 3,606     | 23,200,000 / 39,900,000 † |
-| Kautenja      | normal       | 428 / 3,070     | 4,740,000 / 17,500,000 † | 45,400,000 / 91,500,000 † |
-| asthamishra   | flash-crash  | 496 / 3,153     | 42,400,000 / 59,100,000 † | 90,600,000 / 139,000,000 † |
-
-**† ρ > 1 — the offered load is past the engine's sustainable throughput in that scenario.** The queue grows without bound; therefore, in that case, the figure is **not a convergent latency**: it is the median delay accrued over the fixed ~2 M-message burst and rises with burst length.
-
-The engines shown are a representative high-throughput group (worst-case ceilings in the ≈ 6–8 M/s band), chosen so the tested offered loads bracket their saturation points and isolate the objective latency effect of matcher saturation - **not a judgment or verdict** on any individual engine.
-
-> **Worst-case stress test.** P50 / P99 are measured from each message's scheduled arrival, open-loop at the stated offered rate, coordinated-omission-free (the queueing delay a slow matcher imposes is never hidden). Every engine eventually diverges as ρ → 1. FlashOne's latency knee sits at ≈ 30 M/s (near-edge P50 ≈ 2.1 µs), and it sustains ≈ 31 M/s. 
+moves is **latency**, and latency under load is a property of headroom: as the offered rate
+approaches an engine's sustainable throughput (ρ → 1), queueing delay diverges. The open-loop,
+coordinated-omission-free latency-under-load characterization — the saturation cliff at each
+engine's ceiling, and FlashOne's figures: a sub-microsecond P99 host-path latency at a
+13 M msgs/s load, the P99 under 10 µs up to a saturation knee near 42 M msgs/s (on AMD EPYC processors) 
+[the paper](https://arxiv.org/abs/2606.01183) (Tables 5 and 8), together with its full
+measurement protocol. 
 
 ## Quick start
 
@@ -171,7 +160,7 @@ scaling, networking, and risk checks are out of scope.
 power-law depth,[^depth] and a 95% cancel[^cancel] / 15% IOC[^ioc] / 20% modify lifecycle —
 the paper benchmark's construction.[^paper] The canonical seed is **23**; the harness
 hand-rolls every distribution so a seed reproduces the same workload across compilers
-(`docs/METHODOLOGY.md` records why the paper's seed 12345 realises differently here).
+(see the determinism notes in `docs/METHODOLOGY.md`).
 
 **Correctness.** The engine's full report output is hashed (SHA-256) against
 `reference/correctness_hash.txt` — the byte-identical consensus first established from three
@@ -201,7 +190,7 @@ conventions (`docs/CONFORMANCE.md`).
 - [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **87** whose output diverges,
   or that cannot finish their worst scenario within budget. Non-conforming describes the output
   against the consensus, not engineering quality.
-- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 52 industry-authored
+- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 73 industry-authored
   engines, with the official/production repos and the production DEX matchers broken out.
 - [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) /
   [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md) — per-engine findings and the fixes already
@@ -223,7 +212,7 @@ tests/                  a SHA-256 self-test and three anti-cheat cheat adapters
 CORRECTNESS_FINDINGS.md per-engine correctness verdict + filed-issue link, full audited set
 CONSENSUS_CONFORMING_ENGINES.md  the conforming roster + worst-case throughput
 NON_CONFORMING_ENGINES.md        the non-conforming roster
-RESOLVED_FINDINGS.md    findings since fixed upstream (CppTrader, geseq, matchingo, cheetah, OrderBook-rs, matchina, rinok, pyorderbook, dx1ngy)
+RESOLVED_FINDINGS.md    the 25 findings since fixed upstream
 SNAPSHOTS.md            the pinned upstream commit for every audited engine
 ```
 

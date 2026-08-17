@@ -1,6 +1,6 @@
 # Industry-authored engines
 
-A cross-cutting view of the unified roster: the **52** engines written by people who publicly
+A cross-cutting view of the unified roster: the **73** engines written by people who publicly
 claim a professional trading-industry role — engineers and quants at market-making, prop-trading,
 and hedge-fund firms, exchange and vendor staff. It also includes the official vendor/org engines
 and the production DEX matchers. Every engine here also appears in
@@ -9,9 +9,9 @@ and the production DEX matchers. Every engine here also appears in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) roster); this file only gathers them in one
 place.
 
-Of the 52: **15 conform as shipped** (two of them measured accessor-only), **18 conform only after
-a documented fix**, and **19 diverge, cannot finish their worst scenario, or crash**. The fastest
-worst-case among the 52 is **6.825 M/s**; the FlashOne reference measures **33.20 M/s** on the same
+Of the 73: **20 conform as shipped** (two of them measured accessor-only), **25 conform only after
+a documented fix**, and **28 diverge, cannot finish their worst scenario, or crash**. The fastest
+worst-case among the 73 is **8.19 M/s**; the FlashOne reference measures **33.20 M/s** on the same
 workload. The per-row findings below carry the specifics; the filed issue for each is linked in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md). Each row is a snapshot at that engine's
 pinned commit — several have since been fixed upstream — and most are personal side projects that
@@ -37,22 +37,25 @@ definitional result.
 
 ## Official / production repos
 
-Unlike the personal side projects that make up most of this file, these **9** are official
+Unlike the personal side projects that make up most of this file, these **12** are official
 repositories — a vendor's shipped product, an exchange's own engine, or a firm's org repo. Of the
-9: **3 conform as shipped**, **2 conform after a documented fix** (among them the 10,236★
-StockSharp, whose same-price orders could match out of arrival order at the pinned commit), and **4 diverge or cannot
+12: **4 conform as shipped**, **3 conform after a documented fix** (among them the 10,236★
+StockSharp, whose same-price orders could match out of arrival order at the pinned commit), and **5 diverge or cannot
 finish** (among them the Lykke exchange's engine, whose static deep-book run exceeded the 2 M-message budget at the pinned commit).
 
 | Engine | Lang | Author (as publicly claimed) | Conformance | Worst-case M/s | Finding (one line) |
 |:--|:--|:--|:--|--:|:--|
 | parity (502★) ‡ | Java | paritytrading — open-source org repo (self-described 'open source trading technologies') | as shipped | 2.21 | RB-tree: TreeSet + fastutil id-map |
 | coralme (56★) ‡ | Java | CoralBlocks — official vendor repo | as shipped | 1.97 (flash-crash) | clean |
-| stocksharp (10236★) ‡ | C# | StockSharp — official vendor repo | with fix | 1.64 (swing-25) | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; [#681](https://github.com/StockSharp/StockSharp/issues/681) |
+| stocksharp (10236★) ‡ | C# | StockSharp — official vendor repo | with fix | 1.64 (swing-25) | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; [#681](https://github.com/StockSharp/StockSharp/issues/681); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
+| vdt ‡ | JavaScript | BitFloor's co-founders — the exchange's own engine, mirrored (BitFloor closed 2013; repo owner is an uninvolved re-hoster) | with fix | 0.71 | `assert` never imported → ReferenceError on side guard |
+| viabtc (2784★) ‡ | C | the founder/CEO of ViaBTC, founder of CoinEx (official org repo) | as shipped | 0.29 | skiplist + dict (clean) |
 | trademacher ‡ | Java/JNI | TradeMatcher — the org's own published matching-engine project | as shipped | 0.15 (swing-25) | clean |
 | zorrofix ‡ | C++ | DSEC Capital's own repo (org bio: 'Algo Trading Tech Shop') | with fix | 0.01 (static) | sweep loop never checks whether the aggressor has closed → execute(0)→NAN→abort [#12](https://github.com/dsec-capital/zorro-fix/issues/12) |
 | abides ‡ | Python | JPMorgan research org repo | non-conforming | infeasible (static) | byte-identical on small cells, but static times out at 2 M |
 | lykke ‡ | Kotlin | the Lykke exchange — official repo | non-conforming | infeasible (static) | fast on normal; its static deep-book run exceeded the 2 M-message budget at the pinned commit (conforms on the scenarios it completes) |
 | opexdev ‡ | Kotlin | OPEX — official org repo (open-source crypto-exchange platform) | non-conforming | infeasible (2 M) | modify after a partial fill rests less than requested (stale filledQuantity) + an unconditional O(book-depth) tax per message → infeasible at 2 M; [Bug Report] [#688](https://github.com/opexdev/core/issues/688) |
+| peatio ‡ | Ruby | principal author an ex-core developer at Yunbi (closed crypto exchange); the open-source Peatio exchange itself | non-conforming | infeasible (2 M) | byte-identical on completed cells; the Ruby rbtree engine exceeds the watchdog |
 | buttercoin ‡ | CoffeeScript | Buttercoin — a Bitcoin exchange that closed in 2015; open-sourced engine | non-conforming | crash | partial residual re-inserted under inverted price key → book locks; buttercoin/buttercoin-engine, MIT; [#9](https://github.com/buttercoin/buttercoin-engine/issues/9) |
 
 ## Production DEX matchers
@@ -80,8 +83,8 @@ exceed the 600 s watchdog under the Move VM and wasmer (~444 ms/message).
 | serum ‡ | Rust | Project Serum — the original Solana on-chain order book | as shipped | 2.625 (static) | de-chained Solana CLOB — clean |
 | manifest ‡ | Rust | Manifest (production Solana CLOB; pinned via the Bonasa-Tech repo) | as shipped | 2.145 (static) | de-chained — clean |
 | phoenix ‡ | Rust | Ellipsis Labs (founders ex-Jane Street/Citadel) — official repo | as shipped | 1.5 (static) | de-chained production Solana CLOB — clean |
-| dydx ‡ | Go | a dYdX founder | as shipped | 0.11 (swing-25) | de-chained v4 memclob (accessor-only) |
-| vega ‡ | Go | a Vega Protocol founder (designed a London Stock Exchange matcher) | as shipped | 0.08 (static) | accessor-only |
+| dydx ‡ | Go | dYdX — official protocol org repo (v4-chain memclob); a dYdX founder | as shipped | 0.11 (swing-25) | de-chained v4 memclob (accessor-only) |
+| vega ‡ | Go | Vega Protocol — official org repo; a Vega Protocol founder (designed a London Stock Exchange matcher) | as shipped | 0.08 (static) | accessor-only |
 | clober ‡ | Solidity/EVM | Clober — official org repo (v2-core, production EVM CLOB) | non-conforming | 0.02 (static diverges) | de-chained via revm; the static deep-book scenario diverges at Clober v2's own 32,768-order-per-tick (2^15) OrderId cap — conforms 400/400 on the four feasible scenarios; a representational limit (QuantCup-class), not a correctness defect; ~0.02 M/s under revm interpretation |
 | econia ‡ | Aptos Move | Econia Labs — official org repo (production Aptos CLOB) | non-conforming | infeasible (2 M) | de-chained via the Aptos Move VM (FakeExecutor); a deep same-price sweep exceeds the 600 s watchdog (~444 ms/msg, gate 32/33) → infeasible |
 | osmosis ‡ | CosmWasm/Rust | Osmosis — official org repo (sumtree-orderbook, production Cosmos CLOB) | non-conforming | infeasible (2 M) | infeasible at 2 M (the wasmer-driven audit exceeds the 600 s watchdog); separately, a latent stale-best-tick pointer (`next_bid_tick`/`next_ask_tick` never retracted on a cancel or exact-drain sweep) fails the gate's state dimension without the fix; stale-best-tick bug filed [#211](https://github.com/osmosis-labs/orderbook/issues/211) |
@@ -90,62 +93,83 @@ exceed the 600 s watchdog under the Move VM and wasmer (~444 ms/message).
 ## The full industry-authored roster
 
 FlashOne — the harness publisher's production engine — is shown at the top as the reference point;
-it is not counted in the 52.
+it is not counted in the 73.
 
 | Engine | Lang | Author (as publicly claimed) | Conformance | Worst-case M/s | Finding (one line) |
 |:--|:--|:--|:--|--:|:--|
 | FlashOne | C++ | Flash One Technologies LLC | as shipped | 33.20 (normal) | reference target |
+| e820 / weekend-orderbook ‡ | C | an IMC Trading engineer | with fix | 8.19 | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
+| CppTrader (1041★) ‡ | C++ | Head of C++ Development at Finstek (FX/CFD trading-platform vendor) | as shipped | 7.26 (normal) | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
 | ndfex ‡ | C++ | an ex-Citadel Securities engineer (17y in HFT) | as shipped | 6.825 (swing-25) | std::map RB-tree book (clean) |
-| yashkukrecha ‡ | C++ | incoming at Jump Trading | as shipped | 6.26 (normal) | two priority_queues + timestamp FIFO tiebreak (clean; fastest pro-wave conformer) |
-| daniele ‡ | C++ | an Optiver engineer | with fix | 3.60 (static) | fill-report reads a maker freed in the same fill (matching is correct); [#1](https://github.com/Daniele122898/Trading-Engine/issues/1) |
+| yashkukrecha ‡ | C++ | incoming at Jump Trading | as shipped | 6.26 (normal) | two priority_queues + timestamp FIFO tiebreak (clean) |
+| daniele ‡ | C++ | an Optiver engineer | with fix | 5.36 (normal) | fill-report reads a maker freed in the same fill (matching is correct); [#1](https://github.com/Daniele122898/Trading-Engine/issues/1) |
+| ghosh (677★) ‡ | C++ | a low-latency trading-systems developer and Packt author | with fix | 5.05 (swing-25) | MIT; flat 256-slot price index shared by both sides had no collision handling → cross-side bucket merge crash; + a 1,048,576 order-id cap; both fixed [#9](https://github.com/PacktPublishing/Building-Low-Latency-Applications-with-CPP/issues/9) |
+| hroptatyr/clob ‡ | C | a Data Manager at GA Financial Solutions GmbH (GA Group / GA Asset Management, systematic funds) | as shipped | 4.73 (normal) | b+tree CLOB, `_Decimal64` (no patch) |
+| ranjan2829 (131★) ‡ | C++ | an ex-Baven (GigaBrain) trading-agents engineer; ex-MaticAlgos quant intern | with fix | 4.07 | 4 memory-safety defects fix [#3](https://github.com/ranjan2829/High-Frequency-Trading-Exchange-Engine/issues/3) |
+| faulaire ‡ | C++ | a software engineer at One Eleven Capital (Paris quant hedge fund) | as shipped | 3.62 | Boost.MultiIndex: hashed id + ordered price (clean) |
+| Tzadiko (307★) ‡ | C++ | YouTube's 'Coding Jesus' (getcracked.io) — an ex-quant developer at an undisclosed proprietary trading firm | with fix | 3.39 (flash-crash) | IOC self-deadlock; two-site lock-wrapper fix [#11](https://github.com/Tzadiko/Orderbook/issues/11) + [#12](https://github.com/Tzadiko/Orderbook/issues/12) |
 | serum ‡ | Rust | Project Serum — the original Solana on-chain order book | as shipped | 2.625 (static) | de-chained Solana CLOB — clean |
 | parity (502★) ‡ | Java | paritytrading — open-source org repo (self-described 'open source trading technologies') | as shipped | 2.21 | RB-tree: TreeSet + fastutil id-map |
 | shivaganapathy ‡ | C++ | an IMC engineer | as shipped | 2.15 (normal) | two priority_queues + timestamp FIFO tiebreak (clean) |
 | manifest ‡ | Rust | Manifest (production Solana CLOB; pinned via the Bonasa-Tech repo) | as shipped | 2.145 (static) | de-chained — clean |
 | coralme (56★) ‡ | Java | CoralBlocks — official vendor repo | as shipped | 1.97 (flash-crash) | clean |
 | robdev ‡ | Rust | a CME Group engineer | with fix | 1.76 (static) | clear the emptied price level on cancel, return the real cancel result, and kill the IOC residual — all latent as-shipped (match path immune; the stale best_price is caught by the gate's state audit) [#1](https://github.com/rob-DEV/match-engine/issues/1) |
-| stocksharp (10236★) ‡ | C# | StockSharp — official vendor repo | with fix | 1.64 (swing-25) | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; [#681](https://github.com/StockSharp/StockSharp/issues/681) |
+| stocksharp (10236★) ‡ | C# | StockSharp — official vendor repo | with fix | 1.64 (swing-25) | same-price orders could match out of arrival order (Dictionary enumeration replaces FIFO); conforms with the documented one-line fix; [#681](https://github.com/StockSharp/StockSharp/issues/681); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
 | matchina ‡ | Rust | at GSR (crypto market maker) | with fix | 1.60 (static) | taker-exhaustion guard — no phantom zero-quantity trades; fixed upstream — `RESOLVED_FINDINGS.md` [#3](https://github.com/fran0x/matchina/issues/3) |
 | phoenix ‡ | Rust | Ellipsis Labs (founders ex-Jane Street/Citadel) — official repo | as shipped | 1.5 (static) | de-chained production Solana CLOB — clean |
 | tembolo ‡ | C | a quantitative developer at Tradeweb | with fix | 1.475 (swing-25) | two capacity ceilings (8192-order pool silent-drop + 512 price-level abort) [#1](https://github.com/tembolo1284/matching-engine-c/issues/1) |
+| piquette ‡ | Go | a financial services engineer at Watershed Technologies (equity-options ATS) | non-conforming | 1.28 (flash-crash) | bid/ask maps never populated → every cancel rejected; best-ask uses `>` not `<` [#2](https://github.com/piquette/orderbook/issues/2) |
 | koral ‡ | C++ | a Coinbase software-engineering intern | as shipped | 1.255 (normal) | FIX exchange (clean; thread-affinity plumbing only) |
 | ironcrypto ‡ | Rust | self-described 'TradFi/DeFi Quant' | with fix | 1.04 (6.2 normal) | no-license; adapter restores engine's removed cancel impl (faithfulness caveat) |
 | javalob ‡ | Java | a JPMorgan engineer | as shipped | 1.03 (swing-40) | teaching LOB (clean); worst case with bidirectional `engine_on_batch` (per-message 0.86) |
 | trusted ‡ | Rust | a KRX market-maker at IBK Securities | with fix | 0.925 (static) | latent bid-side market-order double-subtract underflow [#9](https://github.com/JunbeomL22/trusted/issues/9) |
 | kennethzhang ‡ | C++ | a Squarepoint quant researcher | with fix | 0.86 (static) | price the limit-vs-limit cross at the resting maker, not the taker (the adapter normalizes it today) [#1](https://github.com/kennethZhangML/TradingClientExchange/issues/1) |
 | swirly ‡ | Java | a trading-systems developer; co-founder of Reactive Markets | as shipped | 0.79 (swing-40) | clean — native revise changes only lots, so modify = cancel+reinsert per contract |
+| vdt ‡ | JavaScript | BitFloor's co-founders — the exchange's own engine, mirrored (BitFloor closed 2013; repo owner is an uninvolved re-hoster) | with fix | 0.71 | `assert` never imported → ReferenceError on side guard |
 | damian ‡ | Kotlin | a developer with 20y at a bank | as shipped | 0.38 (static) | clean |
 | pyob ‡ | Python | an FX e-trading quant at mBank | with fix | 0.30 (swing-25) | deque IndexError on a full fill + stale best_price after cancel [#1](https://github.com/wegar-2/pyob/issues/1) |
-| joaquinbejar ‡ | Rust | a quant developer at Capital Delta | with fix | 0.29 (static) | Book::replace crossing modify never re-matches → rests a crossed book [#59](https://github.com/joaquinbejar/hft-clob-core/issues/59) |
+| joaquinbejar ‡ | Rust | a quant developer at Capital Delta | with fix | 0.29 (static) | Book::replace crossing modify never re-matches → rests a crossed book [#59](https://github.com/joaquinbejar/hft-clob-core/issues/59); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
+| viabtc (2784★) ‡ | C | the founder/CEO of ViaBTC, founder of CoinEx (official org repo) | as shipped | 0.29 | skiplist + dict (clean) |
 | oceanbook ‡ | Go | self-described HFT developer (bio 'HFT / C++ / Go'; @spectra-fund) | with fix | 0.26 (flash-crash) | Depth writes quantity into the qty field, not the price field [#44](https://github.com/draveness/oceanbook/issues/44) |
+| silue ‡ | Python | an ex-Kairon Labs quantitative-research intern (crypto market maker) | with fix | 0.26 | `get_pnl` computes Decimal × None → crash on the first cross [#1](https://github.com/silue-dev/limit-order-book-market-making/issues/1); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
 | rakuzen25 ‡ | C++ | an Optiver intern | with fix | 0.18 (flash-crash) | within-level FIFO fix (swap-with-last broke arrival order); uint16 ceiling residual; issues disabled upstream |
 | sculd ‡ | Python | a quant/developer who has worked at Two Sigma | with fix | 0.18 (swing-25) | guard unknown-id cancel/status against KeyError and skip cancelled heads in _get_best_price — latent as-shipped (matching path unaffected) [#1](https://github.com/sculd/orderbook_practice_python/issues/1) |
+| mkhoshkam ‡ | Go | a software engineer at Technance (trading-infrastructure vendor) | with fix | 0.18 | heap `Less` ignores seq → FIFO fix (adapter) [#10](https://github.com/mkhoshkam/orderbook/issues/10) |
 | trademacher ‡ | Java/JNI | TradeMatcher — the org's own published matching-engine project | as shipped | 0.15 (swing-25) | clean |
 | OrderBook-rs (477★) ‡ | Rust | a quant developer at Capital Delta | with fix | 0.13 (static) | partial-fill maker keeps FIFO priority (push_front, not re-queue to tail); fixed upstream — `RESOLVED_FINDINGS.md` [#88](https://github.com/joaquinbejar/OrderBook-rs/issues/88) |
-| dydx ‡ | Go | a dYdX founder | as shipped | 0.11 (swing-25) | de-chained v4 memclob (accessor-only) |
+| dydx ‡ | Go | dYdX — official protocol org repo (v4-chain memclob); a dYdX founder | as shipped | 0.11 (swing-25) | de-chained v4 memclob (accessor-only) |
 | qa-rs ‡ | Rust | a private-fund manager (Shanghai Binghao) | with fix | 0.09 (static) | OrderQueue lazy-deletion — same-id reinsert leaves a stale heap entry [#1](https://github.com/yutiansut/qa-rs/issues/1), `get_depth` over-counts a plain cancel until swept [#2](https://github.com/yutiansut/qa-rs/issues/2); + 5 latent `Orderbook` match-loop bugs off the limit-only workload: 1000-id recycle drops orders [#3](https://github.com/yutiansut/qa-rs/issues/3), market remainder rested not killed [#4](https://github.com/yutiansut/qa-rs/issues/4), amend skips the crossing check [#5](https://github.com/yutiansut/qa-rs/issues/5), NaN price passes validation [#6](https://github.com/yutiansut/qa-rs/issues/6), per-order sweep recursion overflows the stack [#7](https://github.com/yutiansut/qa-rs/issues/7) |
-| vega ‡ | Go | a Vega Protocol founder (designed a London Stock Exchange matcher) | as shipped | 0.08 (static) | accessor-only |
+| vega ‡ | Go | Vega Protocol — official org repo; a Vega Protocol founder (designed a London Stock Exchange matcher) | as shipped | 0.08 (static) | accessor-only |
+| rhodey ‡ | JavaScript | an engineer at Velo Data (crypto-derivatives data & trading platform) | as shipped | ~0.02–0.12 (swings) | clean |
 | amer ‡ | Java | a former Nasdaq engineer | non-conforming | 0.02 (static) | same-price orders execute LIFO not FIFO — `>=`/`<=` insertion splices ahead of equal-priced peers (33/40 sweep cells diverge); unconditional O(depth) contra-scan → deep 2 M runs can exceed the watchdog; [#1](https://github.com/AmerSurkovic/MatchingEngine/issues/1) |
 | clober ‡ | Solidity/EVM | Clober — official org repo (v2-core, production EVM CLOB) | non-conforming | 0.02 (static diverges) | de-chained via revm; the static deep-book scenario diverges at Clober v2's own 32,768-order-per-tick (2^15) OrderId cap — conforms 400/400 on the four feasible scenarios; a representational limit (QuantCup-class), not a correctness defect; ~0.02 M/s under revm interpretation |
 | zorrofix ‡ | C++ | DSEC Capital's own repo (org bio: 'Algo Trading Tech Shop') | with fix | 0.01 (static) | sweep loop never checks whether the aggressor has closed → execute(0)→NAN→abort [#12](https://github.com/dsec-capital/zorro-fix/issues/12) |
-| ghosh (677★) ‡ | C++ | a low-latency trading-systems developer and Packt author | with fix | very slow | MIT; flat 256-slot price index shared by both sides had no collision handling → cross-side bucket merge crash; + a 1,048,576 order-id cap; both fixed [#9](https://github.com/PacktPublishing/Building-Low-Latency-Applications-with-CPP/issues/9) |
-| khrapovs ‡ | Python | a senior ML engineer at ING (bank) | with fix | very slow (pure Python) | MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25) |
+| khrapovs ‡ | Python | a senior ML engineer at ING (bank) | with fix | very slow (pure Python) | MIT; orders_by_expiration not pruned on fill [#25](https://github.com/khrapovs/OrderBookMatchingEngine/issues/25); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
+| darkpool ‡ | C++ | founder of Bitwyre (crypto exchange) and Systematic Trading Group (HFT market maker) | with fix | very slow (static) | aggressor pricing in the execution-price report (fixed); matcher core vendored from QuickFIX `examples/ordermatch` [#1](https://github.com/dendisuhubdy/dark_pool/issues/1) |
 | abides ‡ | Python | JPMorgan research org repo | non-conforming | infeasible (static) | byte-identical on small cells, but static times out at 2 M |
 | bitex ‡ | Python | a founder of BlinkTrade (the open-source platform behind the Foxbit exchange) | non-conforming | infeasible (static) | correct on normal/swings, but the static deep-book scenario times out at 2 M |
 | figgie ‡ | OCaml | an ex-Jane Street engineer — figgie is Jane Street's *Figgie* card game (a FIFO matcher), not a commercial engine | non-conforming | infeasible (static) | byte-identical where it completes, but static times out at 2 M |
 | isaaccheng ‡ | Python | ex-T. Rowe Price fixed-income quant developer | non-conforming | infeasible (static) | byte-identical where it completes, but static times out at 2 M |
 | ismailfer ‡ | Java | self-described systematic trading developer / quant trader | non-conforming | infeasible (2 M) | `processTrade()` clears the wrong side's `active` flag on a full fill — truncates multi-order sweeps and orphans resting quantity (a filled id can also never be reused); diverges + infeasible at 2 M; [Bug Report] [#1](https://github.com/ismailfer/exchange-simulator/issues/1) |
-| liqian ‡ | C++ | ex-Virtu Financial quant trader | non-conforming | infeasible (2 M) | O(20 M-tick) domain scan per order → infeasible at 2 M; occupancy bitsets never skip empty levels; [#1](https://github.com/QuantTradingWithLi/high_perf_order_matching/issues/1) |
+| liqian ‡ | C++ | ex-Virtu Financial quant trader | non-conforming | infeasible (2 M) | O(20 M-tick) domain scan per order → infeasible at 2 M; occupancy bitsets never skip empty levels; [#1](https://github.com/QuantTradingWithLi/high_perf_order_matching/issues/1); fixed upstream — `RESOLVED_FINDINGS.md` (the infeasible verdict describes the pinned commit) |
 | lykke ‡ | Kotlin | the Lykke exchange — official repo | non-conforming | infeasible (static) | fast on normal; its static deep-book run exceeded the 2 M-message budget at the pinned commit (conforms on the scenarios it completes) |
 | nilesh05apr ‡ | C++ | a Tower Research Capital SWE intern | non-conforming | infeasible (2 M) | matches only one counterparty per order; O(n²) re-sort → infeasible at 2 M; [#1](https://github.com/nilesh05apr/TradeSim/issues/1) |
 | opexdev ‡ | Kotlin | OPEX — official org repo (open-source crypto-exchange platform) | non-conforming | infeasible (2 M) | modify after a partial fill rests less than requested (stale filledQuantity) + an unconditional O(book-depth) tax per message → infeasible at 2 M; [Bug Report] [#688](https://github.com/opexdev/core/issues/688) |
-| pylob ‡ | Python | a JPMorgan engineer | non-conforming | infeasible (static) | SQLite-backed; static times out at 2 M; 2 bugs [#8](https://github.com/DrAshBooth/PyLOB/issues/8) |
+| pylob ‡ | Python | a JPMorgan engineer | non-conforming | infeasible (static) | SQLite-backed; static times out at 2 M; 2 bugs [#8](https://github.com/DrAshBooth/PyLOB/issues/8); the two bugs are fixed upstream — `RESOLVED_FINDINGS.md` (the infeasible verdict is unchanged) |
 | econia ‡ | Aptos Move | Econia Labs — official org repo (production Aptos CLOB) | non-conforming | infeasible (2 M) | de-chained via the Aptos Move VM (FakeExecutor); a deep same-price sweep exceeds the 600 s watchdog (~444 ms/msg, gate 32/33) → infeasible |
 | osmosis ‡ | CosmWasm/Rust | Osmosis — official org repo (sumtree-orderbook, production Cosmos CLOB) | non-conforming | infeasible (2 M) | infeasible at 2 M (the wasmer-driven audit exceeds the 600 s watchdog); separately, a latent stale-best-tick pointer (`next_bid_tick`/`next_ask_tick` never retracted on a cancel or exact-drain sweep) fails the gate's state dimension without the fix; stale-best-tick bug filed [#211](https://github.com/osmosis-labs/orderbook/issues/211) |
+| lll ‡ | C++ | a Citadel Securities engineer (HFT systems; engine predates employment) | non-conforming | infeasible (static) | infeasible at 2 M — stalls at the 600 s watchdog on deep static |
+| mattdavey ‡ | Java | two then-Lab49 engineers (trading-technology consultancy) | non-conforming | infeasible (2 M) | O(n²) insert rescan — infeasible at 2 M [#26](https://github.com/mattdavey/EuronextClone/issues/26) |
+| peatio ‡ | Ruby | principal author an ex-core developer at Yunbi (closed crypto exchange); the open-source Peatio exchange itself | non-conforming | infeasible (2 M) | byte-identical on completed cells; the Ruby rbtree engine exceeds the watchdog |
+| prystupa (58★) ‡ | Scala | an ex-Lab49 engineer (15+ years building trading systems) | non-conforming | infeasible (static) | infeasible at 2 M — a deep stressful-static book stalls past the watchdog; the latent finding is fixed upstream — `RESOLVED_FINDINGS.md` (the infeasible verdict is unchanged) |
+| thelilypad ‡ | Python | a quantitative options trader/researcher (NOPE indicator; Salience Capital) | non-conforming | infeasible (2 M) | same-price orders can fill out of arrival order (no `heapq` tiebreak); diverges + infeasible at 2 M |
+| zzsun777 ‡ | C++ | the founder of trading-software vendor Coreware Ltd (llfix); at Thomson Reuters at time of authorship (2016); the repo is an unmarked mirror by an uninvolved re-hoster | non-conforming | infeasible (2 M) | byte-identical on every completed cell; O(n) by-owner find exceeds the watchdog |
 | raunakchopra ‡ | C++ | a Flow Traders engineer | non-conforming | crash (sweep) | recursive re-submit overflows the stack; not price-time; O(trades²) I/O; [#1](https://github.com/raunakchopra/OrderBook/issues/1) |
 | buttercoin ‡ | CoffeeScript | Buttercoin — a Bitcoin exchange that closed in 2015; open-sourced engine | non-conforming | crash | partial residual re-inserted under inverted price key → book locks; buttercoin/buttercoin-engine, MIT; [#9](https://github.com/buttercoin/buttercoin-engine/issues/9) |
 | soham ‡ | C++ | an iRage quant-analyst intern | non-conforming | — | binary Yes/No prediction-market matcher — prices hard-validated to [1, 99]; rejects the benchmark's full-range tapes in full by design (not a FIFO defect); internally sound (author-run differential fuzzing; in-domain checks match exactly), no bug report was filed |
 | lethalazo ‡ | C++ | at Marshall Wace (hedge fund) | non-conforming | — | add-only book, missing the cancel/modify operations the benchmark drives; 2 bugs [#1](https://github.com/lethalazo/cpp-order-matching-engine/issues/1) |
+| pyobsim ‡ | Python | a trading-systems engineer at tplus (decentralized prime exchange) | non-conforming | — | `Side.remove` deletes only the head; `__match` mutates the level while iterating [#2](https://github.com/jmcph4/PyOBSim/issues/2); fixed upstream — `RESOLVED_FINDINGS.md` (the verdict describes the pinned commit) |
+| konqr ‡ | Python | a Tower Research Capital quant (ex-JPMorgan Equities Electronic Trading) | non-conforming | — | Hawkes-process simulator — not a price-time CLOB in the benchmark's form [#19](https://github.com/konqr/lobSimulations/issues/19) |
 | deepbook ‡ | Sui Move | Mysten Labs — official org repo (DeepBook v3, Sui's CLOB) | non-conforming | infeasible (2 M) | de-chained via the Sui Move VM (simulacrum); a deep recursive sweep is truncated by DeepBook's own MAX_FILLS=100 per-call cap — a documented gas-safety design cap, not a defect (gate 32/33) + infeasible at 2 M |
 
 As everywhere in this repository: these observations are a reproducible, time-stamped *snapshot* of

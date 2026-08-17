@@ -26,6 +26,13 @@ published figures are unchanged) unless noted otherwise.
 | [robaho/go-trader](#robahogo-trader--modify-of-a-fully-filled-order-is-accepted) | `ModifyOrder` accepts a modify of a fully-filled order instead of rejecting it | [#23](https://github.com/robaho/go-trader/issues/23) | 2026-06-30 | "fixed in 1.4.11 … I added several test cases." |
 | [sadhbh-c0d3/cpp20-orderbook](#sadhbh-c0d3cpp20-orderbook--touch-price-order-never-crosses-and-an-empty-book-deref) | an order at the exact touch price never crosses, and the opposite-side guard dereferences an empty book | [#6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6) | 2026-07-09 | "You were right in both cases." |
 | [silue-dev/limit-order-book-market-making](#silue-devlimit-order-book-market-making--one-sided-book-crashes-add_order) | a trade that leaves the book one-sided crashes `add_order` with a `TypeError` (`get_pnl` × `None` mid) | [#1](https://github.com/silue-dev/limit-order-book-market-making/issues/1) | 2026-07-03 | "Your analysis was right … I've fixed it." |
+| [melin-engine/melin](#melin-enginemelin--stop-trigger-cascade-fires-one-message-late) | a stop made marketable by another stop's fill fires one message late (the trigger cascade is single-pass) | [#2](https://github.com/melin-engine/melin/issues/2) | 2026-07-15 | "Thank you for the report and all the details. A fix was merged into main." |
+| [lanpishu6300/crypto-exchange](#lanpishu6300crypto-exchange--rb-tree-remove-corrupts-the-book) | red-black `remove()`/delete-fixup corrupts the book — wrong best price and counterparty, IOC/FOK under-match, phantom depth levels | [#2](https://github.com/lanpishu6300/crypto-exchange/issues/2) | 2026-07-18 | closed via the fix PR "Fix order book removal/match correctness bugs" |
+| [jmcph4/PyOBSim](#jmcph4pyobsim--sideremove-deletes-only-the-head-of-a-price-level) | `Side.remove` deletes only the level head (non-head cancels silently ignored); `Book.__match` mutates the level while iterating | [#2](https://github.com/jmcph4/PyOBSim/issues/2) | 2026-07-20 | closed via the fix PR "Fix order removal bugs" |
+| [seanoflynn/circus](#seanoflynncircus--completed-order-id-reuse-crash-and-pricetriggerprice-swap) | reusing a completed order id crashes; `Process()` swaps `Price`/`TriggerPrice` (both fixed); the modify-residual item is documented intended behaviour | [#1](https://github.com/seanoflynn/circus/issues/1) | 2026-07-21 | "I have fixed 1 and 3. 2 is expected behaviour … consistent with several futures exchanges such as CME/Eurex." |
+| [StockSharp/StockSharp](#stocksharpstocksharp--dictionary-enumeration-replaces-fifo-time-priority) | after an interior cancel, same-price resting orders can match out of arrival order (`Dictionary` enumeration replaces FIFO) | [#681](https://github.com/StockSharp/StockSharp/issues/681) | 2026-07-21 | closed via the fix PR "Preserve FIFO priority after interior cancellations" |
+| [rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform](#rabbittrixultra-low-latency-fx-etrading-platform--bid-sort-key-mismatch-and-cancel-stub) | bid `binary_search_by_key` mismatches its own sort key (bids unsorted; marketable sells never cross); `cancel_order` is a stub | [#1](https://github.com/rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform/issues/1) | 2026-07-24 | "Both report items are fixed in fx-core; cargo test -p fx-core — 9/9 passed." |
+| [DrAshBooth/PyLOB](#drashboothpylob--two-fulfilled-accounting-bugs-let-a-maker-match-past-its-size) | `trade_insert` keys fulfilment on `idNum` not `order_id`; `modifyOrder`'s reprice-cross never subtracts `fulfilled` | [#8](https://github.com/DrAshBooth/PyLOB/issues/8) | 2026-08-14 | "Both findings confirmed, both fixed — and then the engine they lived in was retired." |
 
 The full analysis and resolution record for each follows.
 
@@ -400,3 +407,59 @@ In `match_order`, an order at the exact touch price never crossed (a strict-ineq
 ### The finding (as recorded before the fix)
 
 A trade that emptied one side of the book crashed the next `add_order` with a `TypeError`: `get_pnl` multiplied a position by a `None` mid-price when no two-sided mid existed.
+
+## melin-engine/melin — stop-trigger cascade fires one message late
+
+**Status — RESOLVED upstream (2026-07-15).** Reported as melin-engine/melin [issue #2](https://github.com/melin-engine/melin/issues/2); the maintainer merged a fix into main, replying *"my apologies for the delay — thank you for the report and all the details. A fix was merged into main,"* noting that Melin is a sequencer-first design whose exchange core also carries risk checks and balance bookkeeping beyond a pure matcher. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+A stop order made marketable by another stop's fill is not re-evaluated within the triggering event — the stop-trigger cascade is single-pass, so the chained stop fires one message late. Corrected for the harness run by the documented with-fix patch.
+
+## lanpishu6300/crypto-exchange — RB-tree remove() corrupts the book
+
+**Status — RESOLVED upstream (2026-07-18).** Reported as lanpishu6300/crypto-exchange [issue #2](https://github.com/lanpishu6300/crypto-exchange/issues/2); the maintainer closed it through the fix PR *"Fix order book removal/match correctness bugs"* (three referenced commits), without further comment. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+The red-black `remove()` and its delete-fixup corrupt the book on interior removals — wrong best price and wrong counterparty selection, IOC/FOK under-matching, and phantom depth levels that no longer hold resting quantity.
+
+## jmcph4/PyOBSim — Side.remove deletes only the head of a price level
+
+**Status — RESOLVED upstream (2026-07-20).** Reported as jmcph4/PyOBSim [issue #2](https://github.com/jmcph4/PyOBSim/issues/2); the maintainer closed it through the fix PR *"Fix order removal bugs"*, without further comment. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+`Side.remove` deletes only the head order of a price level, so a cancel of any non-head order is silently ignored; and `Book.__match` mutates the level list while iterating it, so a cross can skip a better level and execute out of price-time order.
+
+## seanoflynn/circus — completed-order-id reuse crash and Price/TriggerPrice swap
+
+**Status — RESOLVED upstream (2026-07-21).** Reported as seanoflynn/circus [issue #1](https://github.com/seanoflynn/circus/issues/1); the maintainer fixed the id-reuse crash and the `Price`/`TriggerPrice` swap, replying *"I have fixed 1 and 3,"* and documented the third item — a cancel-replace resting less than requested — as intended behaviour: *"when cancel-replacing an order you specify the total quantity, not the remaining quantity … consistent with several futures exchanges such as CME/Eurex."* The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+Reusing a completed order id crashed the engine; `Process()` swapped `Price` and `TriggerPrice`; and a partial-fill-then-modify rested less than requested — per the maintainer the last item is total-quantity cancel-replace semantics (a documented convention on several futures exchanges), not a defect.
+
+## StockSharp/StockSharp — Dictionary enumeration replaces FIFO time priority
+
+**Status — RESOLVED upstream (2026-07-21).** Reported as StockSharp/StockSharp [issue #681](https://github.com/StockSharp/StockSharp/issues/681); the maintainer closed it through the fix PR *"Preserve FIFO priority after interior cancellations"*, without further comment. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+After any interior cancellation, a price level's resting orders could be matched out of arrival order — `Dictionary` enumeration silently replaced FIFO/time priority in `OrderBook`/`OrderMatcher`. The engine conforms with the documented one-line fix at the pinned commit.
+
+## rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform — bid sort-key mismatch and cancel stub
+
+**Status — RESOLVED upstream (2026-07-24).** Reported as rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform [issue #1](https://github.com/rabbittrix/Ultra-Low-Latency-FX-eTrading-Platform/issues/1); the maintainer fixed both items, replying *"both report items are fixed in fx-core; cargo test -p fx-core — 9/9 passed,"* replacing the mismatched comparator with a consistent descending `binary_search_by`. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+The bid-side `binary_search_by_key` compared a raw price target against a `u64::MAX - price` sort key, so every new bid landed at index 0 and bids were never price-sorted — marketable sells failed to cross; independently, `cancel_order` was a stub that never removed the order.
+
+## DrAshBooth/PyLOB — two fulfilled-accounting bugs let a maker match past its size
+
+**Status — RESOLVED upstream (2026-08-14).** Reported as DrAshBooth/PyLOB [issue #8](https://github.com/DrAshBooth/PyLOB/issues/8); the maintainer confirmed and fixed both findings (commits `489c360` and `8b0c61c`), replying *"both findings confirmed, both fixed — and then the engine they lived in was retired,"* archiving the project after the fix landed. The harness pins the pre-fix snapshot, so the engine's published figures are unchanged.
+
+### The finding (as recorded before the fix)
+
+Two independent bugs in the same accounting column: `trade_insert`'s fulfilment trigger keys on `idNum` instead of `order_id`, and `modifyOrder`'s reprice-triggered cross never subtracts `fulfilled` — both let a resting order be matched past its true size.

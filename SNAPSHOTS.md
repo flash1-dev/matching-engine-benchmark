@@ -70,7 +70,7 @@ pinned third-party adapters and are omitted.
 | buttercoin | buttercoin/buttercoin-engine | `02ba2aa93be4ac07151a642d06aec0772ee40c06` | CoffeeScript |
 | charles | CharlesMfouapon/limit-order-book | `471e19a54e19083c266ee1aa2266d0460fde6039` | Java |
 | cheetah | CheetahExchange/orderbook-rs | `caa33f34440056211105ac9933d2d8bc35f94e92` | Rust |
-| chessbr | chessbr/rust-exchange | (commit not retained) | Rust |
+| chessbr | chessbr/rust-exchange | `7f263a2bb879ddd412987727ce97e750ce3362de` | Rust |
 | chronex | osamaahmad00/chronex | `d55362f0aecfb994f59e7e564e447a38f3f9debe` | C++ |
 | circus | seanoflynn/circus | `8f881b6b0f0b9b70d5faac0816e64fe68a70b47b` | C# |
 | cjboxing | cjboxing/match | `ff26d5b59f02c9fa5e4fb8cd8a39fa37bd3db74a` | — |
@@ -127,7 +127,7 @@ pinned third-party adapters and are omitted.
 | instrument_spot | andry-ralambomanantsoa/instrument_spot | `139ffc555002bb01711c6df52c07a03170d7243c` | Rust |
 | ironcrypto | ironcrypto/imlob | `f1dadeaa4ef64099f923fa806fcae6ba3a31aa97` | — |
 | isaaccheng | IsaacCheng9/order-book-simulator | `65530f7ef39cda0f48cf3bdde3cc7b0c762d4212` | Python |
-| isaaruwu | isaaruwu/ordermatchingengine | `a9b1b811e379b978b8f6bf9474d03b76242f1744` | — |
+| isaaruwu | isaaruwu/ordermatchingengine (source examination only — outside the 247-engine driven set) | `a9b1b811e379b978b8f6bf9474d03b76242f1744` | — |
 | ismailfer | ismailfer/exchange-simulator | `7aba33e6918b16ab01017f70e1bbdda8acc04ee0` | Java |
 | iwtxokhtd83 | iwtxokhtd83/matchengine | `e0275e34174f4ed2d043715e1081e3dcba967d25` | Go |
 | javalob | DrAshBooth/JavaLOB | `75af06836bc279289e6bad5c24fdc0440bb4cc57` | Java |
@@ -197,7 +197,7 @@ pinned third-party adapters and are omitted.
 | mkhoshkam | mkhoshkam/orderbook | `3200fefbeaf2a2d186df5b7464013ebb6071d2f0` | Go |
 | mkxzy | mkxzy/match-making | `d4b9004656d42be8f6f7c1e5f97e376055032a26` | — |
 | mmrath | mmrath/oms | `343d46322cacf79d84cf74b8ba6e3aaed506b63b` | — |
-| ms_engine | ? | (commit not retained) | TypeScript |
+| ms_engine | m--s/order-matching-engine | `00d93d02b8ba34ca11195f5c46e2f84c1d6f2d6c` | TypeScript |
 | mtengine | JiaoziExchange/mt-engine | `c51d3de089bf7afd5ed39b24dfcd5e11a2d8fc8a` | Rust |
 | murtyjones | murtyjones/typescript-order-matcher-poc | `d9fd6773ddf99e7f858167e7ce2597e8977ca501` | TypeScript |
 | muzykantov | muzykantov/orderbook | `f93a3deda34386b8af0d1100be128b07c3d273b7` | Go |
