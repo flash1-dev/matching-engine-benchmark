@@ -50,7 +50,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 
 | Engine | Lang | License | Worst-case M/s | Status | Finding (one line) | Issue |
 |:--|:--|:--|--:|:--|:--|:--|
-| FlashOne | C++ | — | 33.20 (normal) | conforms | reference target — the harness publisher's production engine | — |
+| FlashOne | C++ | — | 103.39 (normal) | conforms | reference target — the harness publisher's production engine | — |
 | e820 / weekend-orderbook ‡ | C | — | 8.19 | conforms | singly-linked level (`->prev` unset) orphans on cancel; fills stamped at aggressor price; author: an IMC Trading engineer | [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
 | cpp-orderbook | C++ | — | 7.94 (swing-25) | conforms | — (pinned commit already carries the price-cross fix) | resolved |
 | melin | Rust | BSL-1.1 | 7.86 | conforms | the stop-order trigger cascade is single-pass (chained stop triggers are not re-evaluated); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) | [#2](https://github.com/melin-engine/melin/issues/2) |

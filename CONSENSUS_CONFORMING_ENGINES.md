@@ -10,7 +10,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:--|:--|:--|--:|:--|:--|
-| FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
+| FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
 | e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |

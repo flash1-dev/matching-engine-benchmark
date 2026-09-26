@@ -11,7 +11,7 @@ place.
 
 Of the 73: **20 conform as shipped** (two of them measured accessor-only), **25 conform only after
 a documented fix**, and **28 diverge, cannot finish their worst scenario, or crash**. The fastest
-worst-case among the 73 is **8.19 M/s**; the FlashOne reference measures **33.20 M/s** on the same
+worst-case among the 73 is **8.19 M/s**; the FlashOne reference measures **103.39 M/s** on the same
 workload. The per-row findings below carry the specifics; the filed issue for each is linked in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md). Each row is a snapshot at that engine's
 pinned commit — several have since been fixed upstream — and most are personal side projects that
@@ -97,7 +97,7 @@ it is not counted in the 73.
 
 | Engine | Lang | Author (as publicly claimed) | Conformance | Worst-case M/s | Finding (one line) |
 |:--|:--|:--|:--|--:|:--|
-| FlashOne | C++ | Flash One Technologies LLC | as shipped | 33.20 (normal) | reference target |
+| FlashOne | C++ | Flash One Technologies LLC | as shipped | 103.39 (normal) | reference target |
 | e820 / weekend-orderbook ‡ | C | an IMC Trading engineer | with fix | 8.19 | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
 | CppTrader (1041★) ‡ | C++ | Head of C++ Development at Finstek (FX/CFD trading-platform vendor) | as shipped | 7.26 (normal) | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
 | ndfex ‡ | C++ | an ex-Citadel Securities engineer (17y in HFT) | as shipped | 6.825 (swing-25) | std::map RB-tree book (clean) |

@@ -36,7 +36,7 @@ project's current code or its authors' engineering quality.
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
-| FlashOne | C++ | as shipped | 33.20 (normal) | — | reference target |
+| FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
 | e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
@@ -59,7 +59,7 @@ comparison (every leader above ~2 M/s is C, C++, or Rust).
 
 | Book structure (price ladder) | Fastest engine | Lang | Worst-case M/s | Engines | Notes |
 |:--|:--|:--|--:|--:|:--|
-| PIN + Neighbor-aware trees | FlashOne | C++ | 33.20 | — | reference target; structure as disclosed in the paper |
+| Proprietary structure | FlashOne | C++ | 103.39 | — | reference target; structure as disclosed in the paper |
 | Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid — price-indexed arena + heaps for best price |
 | Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice — 37% of the field (`std::map`, `TreeMap`) |
 | Sorted vector | melin | Rust | 7.86 | 16 | — |
@@ -79,10 +79,10 @@ Throughput is what an exchange measures internally; what a trader experiences wh
 moves is **latency**, and latency under load is a property of headroom: as the offered rate
 approaches an engine's sustainable throughput (ρ → 1), queueing delay diverges. The open-loop,
 coordinated-omission-free latency-under-load characterization — the saturation cliff at each
-engine's ceiling, and FlashOne's figures: a sub-microsecond P99 host-path latency at a
-13 M msgs/s load, the P99 under 10 µs up to a saturation knee near 42 M msgs/s (on AMD EPYC processors) 
-[the paper](https://arxiv.org/abs/2606.01183) (Tables 5 and 8), together with its full
-measurement protocol. 
+engine's ceiling, and FlashOne's figures: a sub-microsecond P99 host-path latency through an
+82 M msgs/s load, the P99 under 10 µs up to its clean operating edge at 116 M msgs/s (production
+configuration, on AMD EPYC processors) — is in [the paper](https://arxiv.org/abs/2606.01183)
+(Tables 6 and 9), together with its full measurement protocol.
 
 ## Quick start
 
@@ -247,9 +247,9 @@ A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the 
 
 Q. Isn't a fast matching engine easy to build?
 
-A. This question conflates implementing a fast matcher with inveting one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is several times faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
+A. This question conflates implementing a fast matcher with inventing one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is an order of magnitude faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
 
-Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~25 M/s above it**. FlashOne reaches **33.20 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 4× margin is not what implementation tweaks accumulate to.
+Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~95 M/s above it**. FlashOne reaches **103.39 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 12.6× margin is not what implementation tweaks accumulate to.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
