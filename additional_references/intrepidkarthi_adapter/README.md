@@ -7,9 +7,12 @@ event stream.
 
 Pinned commit: `eaf40498e09bed01779521592a583bcff4d09d6e`.
 
-The adapter is maintained upstream, in `cmd/flash1engine` (cgo glue) and
-`internal/flash1` (the mapping, in plain Go with unit tests). `build.sh` builds it
-from the pinned commit, so nothing is vendored here.
+The adapter is two Go files, vendored in this folder verbatim from the pinned commit:
+`cmd/flash1engine/main.go` (cgo glue) and `internal/flash1/flash1.go` (the mapping, in
+plain Go; its unit tests stay upstream at the same commit). `internal/flash1` can only
+be imported from inside the engine's module, so `build.sh` copies both files into the
+clone and builds there. Both are © 2026 Karthikeyan NG, under the MIT license in
+[`LICENSE`](LICENSE).
 
 ## Engine shape
 
@@ -80,9 +83,11 @@ bash additional_references/intrepidkarthi_adapter/build.sh
    already on `PATH`. No sudo.
 2. Clones the engine into `third_party/intrepidkarthi_orderbook/` at the pinned
    commit.
-3. Builds `./cmd/flash1engine` with `go build -buildmode=c-shared`, writing
+3. Copies the two vendored files into the clone, at the same paths.
+4. Builds `./cmd/flash1engine` with `go build -buildmode=c-shared`, writing
    `intrepidkarthi_adapter.so` at the harness repo root.
 
-Override the checkout with `ME_INTREPIDKARTHI_SRC=/path/to/checkout`.
+Override the checkout with `ME_INTREPIDKARTHI_SRC=/path/to/checkout`. Step 3 then
+overwrites `cmd/flash1engine/main.go` and `internal/flash1/flash1.go` in that checkout.
 
-License: MIT.
+License: MIT, for the engine and the two vendored files ([`LICENSE`](LICENSE)).
