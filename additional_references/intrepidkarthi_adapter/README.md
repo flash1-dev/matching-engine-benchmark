@@ -7,12 +7,14 @@ event stream.
 
 Pinned commit: `eaf40498e09bed01779521592a583bcff4d09d6e`.
 
-The adapter is two Go files, vendored in this folder verbatim from the pinned commit:
-`cmd/flash1engine/main.go` (cgo glue) and `internal/flash1/flash1.go` (the mapping, in
-plain Go; its unit tests stay upstream at the same commit). `internal/flash1` can only
-be imported from inside the engine's module, so `build.sh` copies both files into the
-clone and builds there. Both are © 2026 Karthikeyan NG, under the MIT license in
-[`LICENSE`](LICENSE).
+The adapter is two Go files, vendored in this folder: `cmd/meadapter/wrapper.go` (cgo
+glue) and `internal/meadapter/adapter.go` (the mapping, in plain Go). They are adapted
+from the adapter upstream ships at the pinned commit, and differ from it only in names
+(directories, files, the package and its identifiers, the comments that refer to them,
+and the instrument symbol the adapter registers); the logic is unchanged. Upstream's
+unit tests stay upstream. `internal/meadapter` can only be imported from inside the
+engine's module, so `build.sh` adds both files to the clone and builds there. Both are
+© 2026 Karthikeyan NG, under the MIT license in [`LICENSE`](LICENSE).
 
 ## Engine shape
 
@@ -32,7 +34,7 @@ workload has no accounts and every order belongs to one user.
 
 ## Adapter strategy
 
-- **cgo `c-shared`.** `cmd/flash1engine` is a Go `package main` with `//export`
+- **cgo `c-shared`.** `cmd/meadapter` is a Go `package main` with `//export`
   functions. The ABI structs are declared in its own preamble from the header's
   documented layout, with `_Static_assert` on every size and the offsets it reads.
 - **Batch delivery.** It exports `engine_on_batch`, so one cgo crossing carries a
@@ -70,6 +72,10 @@ The workflows are `flash1.yml` and `flash1-conformance.yml` upstream.
 The run, with its job summary:
 <https://github.com/intrepidkarthi/orderbook/actions/runs/37646190523>.
 
+Those runs built upstream's own copies of the two adapter files, under upstream's names.
+The copies in this folder differ from them only in names, comments and the instrument
+symbol.
+
 ## Build / run
 
 ```bash
@@ -83,11 +89,12 @@ bash additional_references/intrepidkarthi_adapter/build.sh
    already on `PATH`. No sudo.
 2. Clones the engine into `third_party/intrepidkarthi_orderbook/` at the pinned
    commit.
-3. Copies the two vendored files into the clone, at the same paths.
-4. Builds `./cmd/flash1engine` with `go build -buildmode=c-shared`, writing
+3. Copies the two vendored files into the clone, as `cmd/meadapter/wrapper.go` and
+   `internal/meadapter/adapter.go`.
+4. Builds `./cmd/meadapter` with `go build -buildmode=c-shared`, writing
    `intrepidkarthi_adapter.so` at the harness repo root.
 
-Override the checkout with `ME_INTREPIDKARTHI_SRC=/path/to/checkout`. Step 3 then
-overwrites `cmd/flash1engine/main.go` and `internal/flash1/flash1.go` in that checkout.
+Override the checkout with `ME_INTREPIDKARTHI_SRC=/path/to/checkout`. Step 3 then adds
+`cmd/meadapter/` and `internal/meadapter/` to that checkout.
 
 License: MIT, for the engine and the two vendored files ([`LICENSE`](LICENSE)).

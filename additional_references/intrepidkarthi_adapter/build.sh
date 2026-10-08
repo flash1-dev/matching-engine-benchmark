@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build intrepidkarthi_adapter.so. Installs a Go toolchain (user-local, no sudo) if
 # one is not already on PATH, clones intrepidkarthi/orderbook at a pinned commit,
-# copies in the adapter's two vendored Go files, and builds its cmd/flash1engine as a
-# cgo c-shared library at the harness repo root.
+# adds the adapter's two vendored Go files to it, and builds cmd/meadapter as a cgo
+# c-shared library at the harness repo root.
 #
 # Override the upstream checkout: ME_INTREPIDKARTHI_SRC=/path/to/existing/clone.
-# The two vendored files are copied into that checkout too, over its own.
+# The two vendored files are added to that checkout too.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -54,15 +54,15 @@ else
     git -C "$SRC" reset --hard --quiet "$SRC_REF"
 fi
 
-# The adapter's two Go files are vendored in this folder, verbatim from SRC_REF.
-# Copy them into the engine module (cmd/flash1engine imports internal/flash1, which
-# Go allows only from inside the module), so the files built are the ones here.
-mkdir -p "$SRC/cmd/flash1engine" "$SRC/internal/flash1"
-cp "$DIR/cmd/flash1engine/main.go"  "$SRC/cmd/flash1engine/main.go"
-cp "$DIR/internal/flash1/flash1.go" "$SRC/internal/flash1/flash1.go"
+# The adapter's two Go files are vendored in this folder. Copy them into the engine
+# module (cmd/meadapter imports internal/meadapter, which Go allows only from inside
+# the module), so the files built are the ones here.
+mkdir -p "$SRC/cmd/meadapter" "$SRC/internal/meadapter"
+cp "$DIR/cmd/meadapter/wrapper.go"      "$SRC/cmd/meadapter/wrapper.go"
+cp "$DIR/internal/meadapter/adapter.go" "$SRC/internal/meadapter/adapter.go"
 
 (cd "$SRC" && CGO_ENABLED=1 go build -trimpath -buildmode=c-shared \
-    -o "$REPO/intrepidkarthi_adapter.so" ./cmd/flash1engine)
+    -o "$REPO/intrepidkarthi_adapter.so" ./cmd/meadapter)
 rm -f "$REPO/intrepidkarthi_adapter.h"
 
 echo "built: intrepidkarthi_adapter.so"

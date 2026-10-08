@@ -1,10 +1,10 @@
-// Command flash1engine is the matching engine behind the flash1 benchmark harness's C
-// ABI, api/matching_engine_api.h (docs/FLASH1.md).
+// Command meadapter exposes intrepidkarthi/orderbook's matching engine through the
+// benchmark harness's C ABI, api/matching_engine_api.h.
 //
-//	go build -buildmode=c-shared -o intrepidkarthi_adapter.so ./cmd/flash1engine
+//	go build -buildmode=c-shared -o intrepidkarthi_adapter.so ./cmd/meadapter
 //
-// The logic lives in internal/flash1 and is tested there; this file only moves
-// messages and reports across the boundary.
+// The logic lives in internal/meadapter; this file only moves messages and reports
+// across the boundary.
 package main
 
 /*
@@ -12,7 +12,7 @@ package main
 #include <stdint.h>
 
 // The harness's structs, declared from the header's documented layout rather than
-// included: the header is not vendored here (docs/FLASH1.md §2), and cgo's prototypes
+// included: the header is not vendored upstream, and cgo's prototypes
 // for the exports would not match the header's const-qualified ones anyway. The
 // asserts pin every size and the offsets the adapter reads or writes; a mismatch with
 // the real header fails the harness's correctness hash on CI.
@@ -96,7 +96,7 @@ import "C"
 import (
 	"unsafe"
 
-	"github.com/intrepidkarthi/orderbook/internal/flash1"
+	"github.com/intrepidkarthi/orderbook/internal/meadapter"
 )
 
 func main() {}
@@ -105,13 +105,13 @@ func main() {}
 var (
 	transport *C.me_transport_t
 	sink      unsafe.Pointer
-	adapter   *flash1.Adapter
+	adapter   *meadapter.Adapter
 	// out holds the reports of the call or batch in progress. Its backing array is
 	// reused, so emitting does not allocate once it has grown.
 	out []C.me_report_t
 )
 
-func emit(r flash1.Report) {
+func emit(r meadapter.Report) {
 	out = append(out, C.me_report_t{
 		_type:           C.uint8_t(r.Type),
 		side:            C.uint8_t(r.Side),
@@ -137,7 +137,7 @@ func push() {
 func engine_init(seed C.uint64_t, t *C.me_transport_t, reportSink unsafe.Pointer) {
 	transport, sink = t, reportSink
 	out = make([]C.me_report_t, 0, 1<<12)
-	adapter = flash1.New(emit)
+	adapter = meadapter.New(emit)
 }
 
 //export engine_shutdown

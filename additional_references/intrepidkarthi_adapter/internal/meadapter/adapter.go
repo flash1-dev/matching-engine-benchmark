@@ -1,8 +1,8 @@
-// Package flash1 drives the matching engine the way the flash1 benchmark harness
-// does, and produces the harness's report stream (docs/FLASH1.md). It is the
-// adapter's logic in plain Go, so it can be tested here; cmd/flash1engine is the
-// cgo glue that exposes it through the harness's C ABI.
-package flash1
+// Package meadapter drives intrepidkarthi/orderbook's matching engine the way the
+// benchmark harness does, and produces the harness's report stream. It is the
+// adapter's logic in plain Go; cmd/meadapter is the cgo glue that exposes it through
+// the harness's C ABI.
+package meadapter
 
 import (
 	"math"
@@ -34,7 +34,7 @@ type Report struct {
 }
 
 const (
-	symbol = "FLASH1"
+	symbol = "BENCH"
 	// user is every order's owner: the workload has no accounts, which is also why
 	// self-trade prevention is ALLOW.
 	user = "u"
