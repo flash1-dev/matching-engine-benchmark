@@ -2,7 +2,7 @@
 
 Companion to [`README.md`](README.md) (which shows the top 10 by worst-case throughput). A one-line finding and the filed-issue link per engine are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) (the linked issue carries the full mechanism and patch); the pre-run conformance gate is in [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-These **160** engines (110 of them with our suggested fix) reproduce the byte-identical consensus on both the report stream and the book state across 100 random workload seeds — **1 billion+ order messages** each — and pass the pre-run conformance gate. **as shipped** = conforms unmodified with no known correctness defect. **with fix** = reproduces the consensus after the minimal documented patch — whether the defect diverges the canonical workload or is *latent* (reachable only off-workload or through the book-state audit); the filed issue carries the patch. The table spans every common book architecture and 16 source languages (the full 247-engine survey spans 20+). Every row describes the engine at its pinned commit in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, **not a judgment of current code or engineering quality**.
+These **162** engines (110 of them with our suggested fix) reproduce the byte-identical consensus on both the report stream and the book state across 100 random workload seeds — **1 billion+ order messages** each — and pass the pre-run conformance gate. **as shipped** = conforms unmodified with no known correctness defect. **with fix** = reproduces the consensus after the minimal documented patch — whether the defect diverges the canonical workload or is *latent* (reachable only off-workload or through the book-state audit); the filed issue carries the patch. The table spans every common book architecture and 16 source languages (the full 249-engine survey spans 20+). Every row describes the engine at its pinned commit in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, **not a judgment of current code or engineering quality**.
 
 The **Worst-case M/s** column is each engine's lowest throughput across the five scenarios (weakest regime, seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`), measured **in isolation on clean cores** at the median of 10 trials. A parenthesised scenario names the weakest regime where recorded; the broader survey rows give the worst-of-five as a single figure.
 
@@ -11,6 +11,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:--|:--|:--|--:|:--|:--|
 | FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
+| lcv3 / LC++ v3 | C++ | as shipped | 9.25 (normal) | ~42M/s | author-permitted license; treap price levels + intrusive FIFO; ARM build workaround — an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified); runs cluster near 8.3 and 9.8 M/s, so the figure is one 10-run battery's median |
 | e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |
@@ -69,6 +70,7 @@ The **Worst-case M/s** column is each engine's lowest throughput across the five
 | phoenix ‡ | Rust | as shipped | 1.5 (static) | — | de-chained production Solana CLOB (Ellipsis Labs; founders ex-Jane Street/Citadel); clean |
 | tembolo ‡ | C | with fix | 1.475 (swing-25) | — | two capacity ceilings (8192-order pool silent-drop + 512 price-level abort) [#1](https://github.com/tembolo1284/matching-engine-c/issues/1); author: a quantitative developer at Tradeweb |
 | cryptonstudio | Go | as shipped | 1.47 | — | clean; a quote-locking pricing observation was investigated and dropped |
+| intrepidkarthi | Go | as shipped | 1.44 (swing-25) | — | clean; map of price levels + sorted price ladder; worst case with `engine_on_batch` — per-message cgo delivery 1.01 |
 | Exchange-core (2556★) | Java/JVM | as shipped | 1.40 (flash-crash) | — | baseline; direct-access book; worst case with `engine_on_batch` — per-message JNI delivery 1.20 |
 | loom | Rust | with fix | 1.39 (static) | — | check FOK fillability against total reachable quantity, not one maker at a time — a multi-maker-fillable FOK fills [#1](https://github.com/AlphaGodzilla/loom/issues/1) |
 | sadhbh | C++ | with fix | 1.28 (static) | — | C++20 coroutines; exact-touch crossing + empty-book deref guard [#6](https://github.com/sadhbh-c0d3/cpp20-orderbook/issues/6); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) |

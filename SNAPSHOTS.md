@@ -125,9 +125,10 @@ pinned third-party adapters and are omitted.
 | hyobyun | hyobyun/exchangeengine | `55ad630ae37e2b92aab851c3284b0508c85e86d1` | JavaScript |
 | i25959341 | i25959341/orderbook | `0d883ab1157580d58ba9f2b9c537a3363310231c` | Go |
 | instrument_spot | andry-ralambomanantsoa/instrument_spot | `139ffc555002bb01711c6df52c07a03170d7243c` | Rust |
+| intrepidkarthi | intrepidkarthi/orderbook | `eaf40498e09bed01779521592a583bcff4d09d6e` | Go |
 | ironcrypto | ironcrypto/imlob | `f1dadeaa4ef64099f923fa806fcae6ba3a31aa97` | — |
 | isaaccheng | IsaacCheng9/order-book-simulator | `65530f7ef39cda0f48cf3bdde3cc7b0c762d4212` | Python |
-| isaaruwu | isaaruwu/ordermatchingengine (source examination only — outside the 247-engine driven set) | `a9b1b811e379b978b8f6bf9474d03b76242f1744` | — |
+| isaaruwu | isaaruwu/ordermatchingengine (source examination only — outside the 249-engine driven set) | `a9b1b811e379b978b8f6bf9474d03b76242f1744` | — |
 | ismailfer | ismailfer/exchange-simulator | `7aba33e6918b16ab01017f70e1bbdda8acc04ee0` | Java |
 | iwtxokhtd83 | iwtxokhtd83/matchengine | `e0275e34174f4ed2d043715e1081e3dcba967d25` | Go |
 | javalob | DrAshBooth/JavaLOB | `75af06836bc279289e6bad5c24fdc0440bb4cc57` | Java |
@@ -157,6 +158,7 @@ pinned third-party adapters and are omitted.
 | landakram | landakram/orderbook-rs | `fd2c479bccc7fdd0a528c9bc9039a7f3cae6aa87` | Rust |
 | lanpishu | lanpishu6300/crypto-exchange | `fff19262bc7b54531dbe13fe26da86725659acc5` | C++ |
 | laymats | laymats/auto.trade.engie | `94855710a1f0acd17b99c1da690ce7166b0fb824` | — |
+| lcv3 | lc-lukaszczerwinski/public | `f956a09190c41f8873438f9e3a0a386777a87647` | C++ |
 | lethalazo | lethalazo/cpp-order-matching-engine | `71309e7a973b27a29ec28f7e8f5f3cc98da1a111` | C++ |
 | lightning | xiiiew/lightning-engine | `9ab661f4b2dee7ce4838291aee2ac92aaa8d0092` | Go |
 | lightning (754liam) | 754liam/lightning | `c08e428d0c549cf6f98b74479016403f5f8ff693` | C++ |

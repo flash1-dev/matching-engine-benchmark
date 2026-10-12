@@ -5,7 +5,7 @@ An engine under test is a shared library (`.so`) that exports the C ABI in
 default, drives it one message at a time (see *Batch delivery* in
 `docs/METHODOLOGY.md`). This document is the how-to; the three adapters in
 `adapters/` are the minimal worked examples, and `additional_references/`
-contains 40 worked adapters (the permissively-licensed subset of the ~134
+contains 42 worked adapters (the permissively-licensed (or author-permitted) subset of the ~136
 built across the 20+-language survey; the rest are held data-only), several of
 which patch the upstream source at build time and may be the closest
 template depending on the engine's shape.

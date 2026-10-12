@@ -10,15 +10,15 @@ duplicates; to request coverage of an engine, contact contact@flash1.com.
 
 ## Results
 
-The harness has been run against **247 distinct matching engines** — every common FIFO book
-architecture, 20+ source languages. **160 reproduce the byte-identical consensus** (113 of them
+The harness has been run against **249 distinct matching engines** — every common FIFO book
+architecture, 20+ source languages. **162 reproduce the byte-identical consensus** (113 of them
 only after a documented correctness fix at their pinned commit; three have since merged that fix
 upstream and now conform as shipped, so 110 still carry ours) and are listed in
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **87**
 diverge, cannot finish their slowest scenario within the message budget, or crash
 ([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
 
-The consensus oracle is also a bug-finder: across the 247 engines tested, wherever it surfaced a
+The consensus oracle is also a bug-finder: across the 249 engines tested, wherever it surfaced a
 reportable finding we drafted a fix and reported it, respectfully: **181 GitHub issues filed
 upstream** for +250 distinct findings — **25 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
@@ -37,6 +37,7 @@ project's current code or its authors' engineering quality.
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
 | FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
+| lcv3 / LC++ v3 | C++ | as shipped | 9.25 (normal) | ~42M/s | treap price levels + intrusive FIFO; ARM build needs an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified) |
 | e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
@@ -45,10 +46,9 @@ project's current code or its authors' engineering quality.
 | llc993 (154★) | Rust | as shipped | 7.14 (swing-25) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
 | ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: an ex-Citadel Securities engineer (17y in HFT) |
-| matchcore | Rust | with fix | 6.58 | — | marketable limit passes None → sweeps like market order, pays through own limit [#167](https://github.com/minyukim/matchcore/issues/167) |
 
 See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of
-all **160** conforming engines.
+all **162** conforming engines.
 
 ### Throughput by book structure
 
@@ -60,9 +60,10 @@ comparison (every leader above ~2 M/s is C, C++, or Rust).
 | Book structure (price ladder) | Fastest engine | Lang | Worst-case M/s | Engines | Notes |
 |:--|:--|:--|--:|--:|:--|
 | Proprietary structure | FlashOne | C++ | 103.39 | — | reference target; structure as disclosed in the paper |
+| Treap (randomized balanced BST) | lcv3 | C++ | 9.25 | 1 | intrusive FIFO per level; fixed order and level pools |
 | Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid — price-indexed arena + heaps for best price |
 | Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice — 37% of the field (`std::map`, `TreeMap`) |
-| Sorted vector | melin | Rust | 7.86 | 16 | — |
+| Sorted vector | melin | Rust | 7.86 | 17 | — |
 | AVL tree | CppTrader | C++ | 7.26 | 5 | balanced BST (CppCommon `BinTreeAVL`) |
 | B-tree / B+tree | raymondshe | Rust | 7.20 | 27 | `BTreeMap`-per-side; the common Rust default |
 | Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | — |
@@ -183,7 +184,7 @@ conventions (`docs/CONFORMANCE.md`).
 
 ## The rosters
 
-- [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) — the **160** conforming
+- [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) — the **162** conforming
   engines (byte-identical on output and book state across 100 random seeds, **1 billion+ order
   messages** each, plus the conformance gate). **as shipped** = conforms unmodified;
   **with fix** = conforms after the minimal documented patch.
@@ -203,7 +204,7 @@ api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
 src/                    the harness — runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  40 worked adapter examples for third-party engines — the permissively-licensed subset of the ~134 adapted across the survey (20+ languages incl. C++/Rust/Go/Java/Python/TypeScript/JavaScript/C#/Zig/C/Haskell/OCaml/Scala/Kotlin/Ruby); the rest are held data-only
+additional_references/  42 worked adapter examples for third-party engines — the permissively-licensed (or author-permitted) subset of the ~136 adapted across the survey (20+ languages incl. C++/Rust/Go/Java/Python/TypeScript/JavaScript/C#/Zig/C/Haskell/OCaml/Scala/Kotlin/Ruby); the rest are held data-only
 patches/                source patches applied to baseline engines (QuantCup)
 reference/              the published canonical report output and its hash
 scripts/                build_baselines.sh, run_challenge.py, compare_results.py
@@ -249,7 +250,7 @@ Q. Isn't a fast matching engine easy to build?
 
 A. This question conflates implementing a fast matcher with inventing one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is an order of magnitude faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
 
-Plotted, it is stark: all **159** conforming open-source engines top out at **8.19 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~95 M/s above it**. FlashOne reaches **103.39 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so a 12.6× margin is not what implementation tweaks accumulate to.
+Plotted, it is stark: all **161** conforming open-source engines top out at **9.25 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~94 M/s above it**. FlashOne reaches **103.39 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so an 11.2× margin is not what implementation tweaks accumulate to.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 

@@ -396,8 +396,8 @@ Pick the closest and read it — they are complete, working adapters:
   small shadow map for the audit queries.
 - `adapters/exchange_core_adapter.cpp` + `adapters/HarnessExchangeCore.java` —
   a **JVM** engine reached over JNI (see §4.4).
-- `additional_references/` — 40 worked adapter examples wrapping third-party
-  matching engines (the permissively-licensed subset of the ~134 adapted across the
+- `additional_references/` — 42 worked adapter examples wrapping third-party
+  matching engines (the permissively-licensed (or author-permitted) subset of the ~136 adapted across the
   20+-language survey; the rest are held data-only). Each subdirectory has
   its own README; see `additional_references/README.md` and each adapter's own README, and
   `CORRECTNESS_FINDINGS.md` for the correctness observations the harness

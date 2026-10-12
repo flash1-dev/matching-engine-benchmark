@@ -1,7 +1,7 @@
 # Additional references
 
-40 worked adapter examples that wrap third-party matching engines behind
-`api/matching_engine_api.h` — the permissively-licensed subset of the ~134 adapters
+42 worked adapter examples that wrap third-party matching engines behind
+`api/matching_engine_api.h` — the permissively-licensed (or author-permitted) subset of the ~136 adapters
 built across the 20+-language survey (the rest are built and measured but held
 data-only). Their purpose is
 to show how an engine with a very different shape from the harness ABI can

@@ -1,6 +1,6 @@
 # Correctness findings
 
-This document is the harness's **correctness record**: for each of the **247 engines** driven
+This document is the harness's **correctness record**: for each of the **249 engines** driven
 through the harness, whether its output conforms to price-time priority, the one-line mechanism
 of any divergence, and the upstream issue filed for it. The conformance vocabulary
 (**as shipped** / **with fix**, including *latent* defects) is defined in
@@ -14,7 +14,7 @@ Wherever the harness surfaced a reportable finding we drafted a fix and reported
 | conform only after a documented matching-correctness fix (incl. *latent* defects) | **110** |
 | do not reproduce the consensus (diverge / infeasible / crash) | **87** |
 | conform as shipped, surfaced defect since resolved upstream | **3** |
-| conform as shipped, no correctness defect (43 fully clean, 4 with a perf/build/off-scope note) | **47** |
+| conform as shipped, no correctness defect (44 fully clean, 5 with a perf/build/off-scope note) | **49** |
 
 **We count findings, not engines: we publish no ranking or count of "buggy" engines.** Non-conforming is not the
 same as defective: an engine may fail to reproduce the consensus because it implements a
@@ -51,6 +51,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | Engine | Lang | License | Worst-case M/s | Status | Finding (one line) | Issue |
 |:--|:--|:--|--:|:--|:--|:--|
 | FlashOne | C++ | — | 103.39 (normal) | conforms | reference target — the harness publisher's production engine | — |
+| lcv3 / LC++ v3 | C++ | author-permitted license | 9.25 (normal) | conforms | — (clean; treap + intrusive FIFO + fixed pools); the engine's `event.hpp` includes `<immintrin.h>` unconditionally, so on ARM it builds only with an empty stand-in header (engine unmodified) | — |
 | e820 / weekend-orderbook ‡ | C | — | 8.19 | conforms | singly-linked level (`->prev` unset) orphans on cancel; fills stamped at aggressor price; author: an IMC Trading engineer | [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
 | cpp-orderbook | C++ | — | 7.94 (swing-25) | conforms | — (pinned commit already carries the price-cross fix) | resolved |
 | melin | Rust | BSL-1.1 | 7.86 | conforms | the stop-order trigger cascade is single-pass (chained stop triggers are not re-evaluated); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) | [#2](https://github.com/melin-engine/melin/issues/2) |
@@ -114,6 +115,7 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | phoenix ‡ | Rust | MIT | 1.5 (static) | conforms | — (de-chained production Solana CLOB; Ellipsis Labs, founders ex-Jane Street/Citadel) | — |
 | tembolo ‡ | C | — | 1.475 (swing-25) | conforms | two capacity ceilings — an 8192-order pool silently drops + a 512 price-level cap aborts; author: a quantitative developer at Tradeweb | [#1](https://github.com/tembolo1284/matching-engine-c/issues/1) |
 | cryptonstudio | Go | MIT | 1.47 | conforms | clean — a quote-locking pricing observation was investigated and dropped | — |
+| intrepidkarthi | Go | MIT | 1.44 (swing-25) | conforms | — (clean; map of price levels + sorted price ladder; worst case with `engine_on_batch`) | — |
 | Exchange-core | Java/JVM | — | 1.40 (flash-crash) | conforms | consensus anchor (direct-access book); worst case with `engine_on_batch` — per-message JNI delivery 1.20 | — |
 | loom | Rust | none | 1.39 (static) | conforms | FOK fillability is checked per-resting-maker, so a FOK spanning >1 maker is killed even when the book can fully fill it | [#1](https://github.com/AlphaGodzilla/loom/issues/1) |
 | piquette ‡ | Go | — | 1.28 (flash-crash) | non-conforming | bid/ask maps never populated → every cancel rejected; duplicate-price stranding; best-ask uses `>` not `<`; author: a financial services engineer at Watershed Technologies (equity-options ATS) | [#2](https://github.com/piquette/orderbook/issues/2) |
@@ -335,8 +337,8 @@ bash additional_references/<name>_adapter/build.sh   # clones + builds
           --matcher-core 82 --drainer-core 83
 ```
 
-Where `<name>` is any of the 40 adapters shipped in [`additional_references/`](additional_references/)
-(~134 engines were adapted across the survey; the 40 permissively-licensed adapters ship in the
+Where `<name>` is any of the 42 adapters shipped in [`additional_references/`](additional_references/)
+(~136 engines were adapted across the survey; the 42 permissively-licensed (or author-permitted) adapters ship in the
 repo, the rest are built and measured but held data-only).
 The build scripts pin each upstream to
 the commits listed in [`SNAPSHOTS.md`](SNAPSHOTS.md). The adapters themselves are not maintained
