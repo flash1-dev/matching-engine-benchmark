@@ -7,13 +7,13 @@ of any divergence, and the upstream issue filed for it. The conformance vocabula
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the pre-run gate in
 [`docs/CONFORMANCE.md`](docs/CONFORMANCE.md).
 
-Wherever the harness surfaced a reportable finding we drafted a fix and reported it respectfully — mechanism, reproduction, suggested patch: **181 GitHub issues are filed upstream**, together reporting **more than 250 distinct findings** (a single issue sometimes bundles up to five). **18 of those filed issues are already fixed** by the maintainers, and none so far were declined, marked *wontfix*, or closed as not-planned — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md); a few findings were unfileable (repo archived / issues disabled). The per-engine status is:
+Wherever the harness surfaced a reportable finding we drafted a fix and reported it respectfully — mechanism, reproduction, suggested patch: **183 GitHub issues are filed upstream**, together reporting **more than 250 distinct findings** (a single issue sometimes bundles up to five). **18 of those filed issues are already fixed** by the maintainers, and none so far were declined, marked *wontfix*, or closed as not-planned — [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md); a few findings were unfileable (repo archived / issues disabled). The per-engine status is:
 
 | | engines |
 |:--|--:|
-| conform only after a documented matching-correctness fix (incl. *latent* defects) | **110** |
+| conform only after a documented matching-correctness fix (incl. *latent* defects) | **111** |
 | do not reproduce the consensus (diverge / infeasible / crash) | **87** |
-| conform as shipped, surfaced defect since resolved upstream | **3** |
+| conform as shipped, surfaced defect since resolved upstream | **2** |
 | conform as shipped, no correctness defect (44 fully clean, 5 with a perf/build/off-scope note) | **49** |
 
 **We count findings, not engines: we publish no ranking or count of "buggy" engines.** Non-conforming is not the
@@ -51,11 +51,11 @@ against a baseline replay). A run is **VALID** only when both match; any byte di
 | Engine | Lang | License | Worst-case M/s | Status | Finding (one line) | Issue |
 |:--|:--|:--|--:|:--|:--|:--|
 | FlashOne | C++ | — | 103.39 (normal) | conforms | reference target — the harness publisher's production engine | — |
-| lcv3 / LC++ v3 | C++ | author-permitted license | 9.25 (normal) | conforms | — (clean; treap + intrusive FIFO + fixed pools); the engine's `event.hpp` includes `<immintrin.h>` unconditionally, so on ARM it builds only with an empty stand-in header (engine unmodified) | — |
+| lcv3 / LC++ v3 ‡ | C++ | author-permitted license | 9.25 (normal) | conforms | — (clean; treap + intrusive FIFO + fixed pools); the engine's `event.hpp` includes `<immintrin.h>` unconditionally, so on ARM it builds only with an empty stand-in header (engine unmodified); author: an independent C++ consultant at Tradeweb (ex-Credit Suisse AVP, ex-JPMorgan developer); published as the demo repo of his one-person consultancy, LC++ — not Tradeweb's work | — |
 | e820 / weekend-orderbook ‡ | C | — | 8.19 | conforms | singly-linked level (`->prev` unset) orphans on cancel; fills stamped at aggressor price; author: an IMC Trading engineer | [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
 | cpp-orderbook | C++ | — | 7.94 (swing-25) | conforms | — (pinned commit already carries the price-cross fix) | resolved |
 | melin | Rust | BSL-1.1 | 7.86 | conforms | the stop-order trigger cascade is single-pass (chained stop triggers are not re-evaluated); fixed upstream — `RESOLVED_FINDINGS.md` (pin stays pre-fix) | [#2](https://github.com/melin-engine/melin/issues/2) |
-| CppTrader ‡ | C++ | — | 7.26 (normal) | conforms | — on canonical; a `ModifyOrder` crash off the canonical path is fixed upstream; author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) | resolved ([#42](https://github.com/chronoxor/CppTrader/issues/42)) |
+| CppTrader ‡ | C++ | — | 7.26 (normal) | conforms | incoming FOK / AON orders fill every maker at the aggressor's price, and crossing resting AON orders can execute unequal quantities and fill outside their limits; a `ModifyOrder` crash off the canonical path is fixed upstream; author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) | [#46](https://github.com/chronoxor/CppTrader/issues/46), [#47](https://github.com/chronoxor/CppTrader/issues/47); resolved ([#42](https://github.com/chronoxor/CppTrader/issues/42)) |
 | raymondshe | Rust | MIT/Apache | 7.20 | conforms | a phantom zero-qty match corrupts the next resting order's id | [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | llc993 | Rust | — | 7.14 (swing-25) | conforms | — (BTreeMap + slab pool + intrusive time-queue) | — |
 | Kautenja | C++ | — | 6.88 (normal) | conforms | duplicate live order-id → unchecked `emplace` re-inserts the first order (self-linked FIFO, double-counted volume, UAF on cancel) — fix verified, VALID ×5 across 100 seeds | [#4](https://github.com/Kautenja/limit-order-book/issues/4) |

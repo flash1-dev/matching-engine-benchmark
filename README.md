@@ -12,14 +12,14 @@ duplicates; to request coverage of an engine, contact contact@flash1.com.
 
 The harness has been run against **249 distinct matching engines** — every common FIFO book
 architecture, 20+ source languages. **162 reproduce the byte-identical consensus** (113 of them
-only after a documented correctness fix at their pinned commit; three have since merged that fix
-upstream and now conform as shipped, so 110 still carry ours) and are listed in
+only after a documented correctness fix at their pinned commit; two have since merged that fix
+upstream and now conform as shipped, so 111 still carry ours) and are listed in
 [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md); the other **87**
 diverge, cannot finish their slowest scenario within the message budget, or crash
 ([`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md)).
 
 The consensus oracle is also a bug-finder: across the 249 engines tested, wherever it surfaced a
-reportable finding we drafted a fix and reported it, respectfully: **181 GitHub issues filed
+reportable finding we drafted a fix and reported it, respectfully: **183 GitHub issues filed
 upstream** for +250 distinct findings — **25 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
@@ -37,11 +37,11 @@ project's current code or its authors' engineering quality.
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
 | FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
-| lcv3 / LC++ v3 | C++ | as shipped | 9.25 (normal) | ~42M/s | treap price levels + intrusive FIFO; ARM build needs an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified) |
+| lcv3 / LC++ v3 ‡ | C++ | as shipped | 9.25 (normal) | ~42M/s | treap price levels + intrusive FIFO; ARM build needs an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified); author: an independent C++ consultant at Tradeweb (ex-Credit Suisse AVP, ex-JPMorgan developer) |
 | e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
 | geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
 | melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
-| CppTrader (1041★) ‡ | C++ | as shipped | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42); author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) |
+| CppTrader (1041★) ‡ | C++ | with fix | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42); off the canonical path (open): incoming FOK / AON orders fill every maker at the aggressor's price [#46](https://github.com/chronoxor/CppTrader/issues/46), and crossing resting AON orders can execute unequal quantities and fill outside their limits [#47](https://github.com/chronoxor/CppTrader/issues/47); author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) |
 | raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | llc993 (154★) | Rust | as shipped | 7.14 (swing-25) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
 | Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
@@ -191,7 +191,7 @@ conventions (`docs/CONFORMANCE.md`).
 - [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **87** whose output diverges,
   or that cannot finish their worst scenario within budget. Non-conforming describes the output
   against the consensus, not engineering quality.
-- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 73 industry-authored
+- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 74 industry-authored
   engines, with the official/production repos and the production DEX matchers broken out.
 - [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) /
   [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md) — per-engine findings and the fixes already

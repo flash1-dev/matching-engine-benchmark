@@ -1,6 +1,6 @@
 # Industry-authored engines
 
-A cross-cutting view of the unified roster: the **73** engines written by people who publicly
+A cross-cutting view of the unified roster: the **74** engines written by people who publicly
 claim a professional trading-industry role — engineers and quants at market-making, prop-trading,
 and hedge-fund firms, exchange and vendor staff. It also includes the official vendor/org engines
 and the production DEX matchers. Every engine here also appears in
@@ -9,9 +9,9 @@ and the production DEX matchers. Every engine here also appears in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) roster); this file only gathers them in one
 place.
 
-Of the 73: **20 conform as shipped** (two of them measured accessor-only), **25 conform only after
+Of the 74: **20 conform as shipped** (two of them measured accessor-only), **26 conform only after
 a documented fix**, and **28 diverge, cannot finish their worst scenario, or crash**. The fastest
-worst-case among the 73 is **8.19 M/s**; the FlashOne reference measures **103.39 M/s** on the same
+worst-case among the 74 is **9.25 M/s**; the FlashOne reference measures **103.39 M/s** on the same
 workload. The per-row findings below carry the specifics; the filed issue for each is linked in
 [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md). Each row is a snapshot at that engine's
 pinned commit — several have since been fixed upstream — and most are personal side projects that
@@ -93,13 +93,14 @@ exceed the 600 s watchdog under the Move VM and wasmer (~444 ms/message).
 ## The full industry-authored roster
 
 FlashOne — the harness publisher's production engine — is shown at the top as the reference point;
-it is not counted in the 73.
+it is not counted in the 74.
 
 | Engine | Lang | Author (as publicly claimed) | Conformance | Worst-case M/s | Finding (one line) |
 |:--|:--|:--|:--|--:|:--|
 | FlashOne | C++ | Flash One Technologies LLC | as shipped | 103.39 (normal) | reference target |
+| lcv3 / LC++ v3 ‡ | C++ | an independent C++ consultant at Tradeweb (ex-Credit Suisse AVP, ex-JPMorgan developer) | as shipped | 9.25 (normal) | author-permitted license; treap price levels + intrusive FIFO (clean); ARM build needs an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified) |
 | e820 / weekend-orderbook ‡ | C | an IMC Trading engineer | with fix | 8.19 | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1) |
-| CppTrader (1041★) ‡ | C++ | Head of C++ Development at Finstek (FX/CFD trading-platform vendor) | as shipped | 7.26 (normal) | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42) |
+| CppTrader (1041★) ‡ | C++ | Head of C++ Development at Finstek (FX/CFD trading-platform vendor) | with fix | 7.26 (normal) | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42); off the canonical path (open): incoming FOK / AON orders fill every maker at the aggressor's price [#46](https://github.com/chronoxor/CppTrader/issues/46), and crossing resting AON orders can execute unequal quantities and fill outside their limits [#47](https://github.com/chronoxor/CppTrader/issues/47) |
 | ndfex ‡ | C++ | an ex-Citadel Securities engineer (17y in HFT) | as shipped | 6.825 (swing-25) | std::map RB-tree book (clean) |
 | yashkukrecha ‡ | C++ | incoming at Jump Trading | as shipped | 6.26 (normal) | two priority_queues + timestamp FIFO tiebreak (clean) |
 | daniele ‡ | C++ | an Optiver engineer | with fix | 5.36 (normal) | fill-report reads a maker freed in the same fill (matching is correct); [#1](https://github.com/Daniele122898/Trading-Engine/issues/1) |
