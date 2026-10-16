@@ -18,7 +18,7 @@ TP="$REPO/third_party"
 mkdir -p "$TP"
 
 CPPTRADER_URL="https://github.com/chronoxor/CppTrader.git"
-CPPTRADER_REF="831d10e2a6dd96ac7b063f1d418f6563cbf74c50"
+CPPTRADER_REF="731ea64674c1701992d38436cb54b3254217bfab"
 CPPCOMMON_URL="https://github.com/chronoxor/CppCommon.git"
 CPPCOMMON_REF="e14011974b8d463cc854239bf351275b5a857de6"
 
@@ -29,6 +29,8 @@ else
     if [ ! -d "$SRC/.git" ]; then
         git clone --quiet "$CPPTRADER_URL" "$SRC"
     fi
+    # an existing checkout made before the pin moved may not have the pinned commit yet
+    git -C "$SRC" cat-file -e "$CPPTRADER_REF^{commit}" 2>/dev/null || git -C "$SRC" fetch --quiet origin
     git -C "$SRC" reset --hard --quiet "$CPPTRADER_REF"
 fi
 

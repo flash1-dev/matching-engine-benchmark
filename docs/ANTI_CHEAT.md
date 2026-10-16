@@ -173,8 +173,8 @@ With no public canonical to replay, the only way to produce the correct report
 stream is to actually match the orders, and the only way to answer the audit is
 to actually maintain the book. The shipped seed-23 reference is for convenient
 self-checking and head-to-head reproduction; an adversarial evaluation should
-use a private held-out seed (any 32-bit value works — the workload shape is
-unchanged, only its realisation differs).
+use a private held-out seed (any 32-bit value that is not one of the published consensus seeds in
+`workload/seeds.txt` works — the workload shape is unchanged, only its realisation differs).
 
 ## The engine may use threads
 

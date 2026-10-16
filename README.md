@@ -166,7 +166,12 @@ hand-rolls every distribution so a seed reproduces the same workload across comp
 **Correctness.** The engine's full report output is hashed (SHA-256) against
 `reference/correctness_hash.txt` — the byte-identical consensus first established from three
 independent engines (so it favours no single design) and since reproduced by the whole
-conforming field.
+conforming field. It also holds pre-computed consensus hashes for 10,000 further random seeds
+(all five scenarios; `workload/seeds.txt`): `scripts/validate_seeds.py --engine <your.so>` validates an engine
+against all of them, or against `--seeds N` of them drawn at random, for CI pipelines. Recommended use: a fresh
+random draw on every commit or pull request (`--seeds 20` to `100` with `--fail-fast`; `--estimate` sizes it to
+your time budget), the full set nightly or before a release (`--junit` for your CI dashboard), and every seed that
+ever failed kept in a `--seed-list @file` that runs every time.
 
 **A full challenge** is 10 perf runs + 1 audit run per scenario
 (`scripts/run_challenge.py`); VALID only if every perf hash and the audit pass. The audit

@@ -54,9 +54,11 @@ applied to `ModifyOrder` and the five sibling erase-after-operation sites that
 share the same stale-iterator hazard (`ReduceOrder`, `ReplaceOrder`,
 `DeleteOrder`, and both `ExecuteOrder` overloads). On the five standard benchmark
 scenarios CppTrader was always clean (VALID ×5); the defect only ever triggered
-off the canonical path. The harness still pins the pre-fix snapshot (`831d10e2`),
-so CppTrader's published figures are unchanged — bump the pin past `731ea64` to
-pick up the fix.
+off the canonical path. On the consensus seeds of `workload/seeds.txt` the pre-fix snapshot
+(`831d10e2`) crashes on 24 of the 50,000 cells; since 2026-10-15 the adapter's `build.sh` pins the fix
+commit `731ea64`, which reproduces all of them. CppTrader's published figures were measured at `831d10e2`;
+a re-measurement at `731ea64` on Graviton4 (18 samples per scenario, interleaved with the
+`831d10e2` build) matches it within 1% on every scenario.
 
 ### The finding (as recorded before the fix)
 

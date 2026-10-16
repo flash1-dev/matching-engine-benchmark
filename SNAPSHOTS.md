@@ -80,7 +80,7 @@ pinned third-party adapters and are omitted.
 | cointossx | dharmeshsing/CoinTossX | `89090edcd15a06f4ed821890adfc8f377ed7d7c7` | Java/JNI |
 | coralme | coralblocks/CoralME | `6d0f94898f05ca7059a79551132be16c17785863` | Java |
 | cpp-orderbook | geseq/cpp-orderbook | `81e5a29fc6f0f64b75f2e9534ee39ab5e66fe2aa` | C++ |
-| CppTrader | chronoxor/CppTrader | `831d10e2a6dd96ac7b063f1d418f6563cbf74c50` | C++ |
+| CppTrader | chronoxor/CppTrader | `731ea64674c1701992d38436cb54b3254217bfab` (since 2026-10-15; issues #42, #46 and #47 were observed at `831d10e2`) | C++ |
 | cryptonstudio | cryptonstudio/crypton-matching-engine | `632ff123a7ecb48d61287ca577e5d0b8ecb84ce2` | Go |
 | cspooner | christian-spooner/trading-server | `d0b6e271101cb24c55bb297790b2dbb8e5141c0b` | Rust |
 | dabrowdev | codeberg.org/dabrowdev/nodejs-order-book-app | `d7c5f3ab14ced873ad9fc8fe4615105f397bac43` | TypeScript |

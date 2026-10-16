@@ -6,13 +6,14 @@ Wraps [chronoxor/CppTrader](https://github.com/chronoxor/CppTrader) behind
 container, allocator, and utility headers.
 
 Pinned commits:
-- `chronoxor/CppTrader`  — `831d10e2a6dd96ac7b063f1d418f6563cbf74c50`
+- `chronoxor/CppTrader`  — `731ea64674c1701992d38436cb54b3254217bfab` (the fix for its issue #42; until 2026-10-15 the
+  pre-fix snapshot `831d10e2`)
 - `chronoxor/CppCommon`  — `e14011974b8d463cc854239bf351275b5a857de6`
 
 This adapter is one of the worked examples in `additional_references/` —
 none are baselines and none are maintained. See `CORRECTNESS_FINDINGS.md` at the
-repository root for the observations the harness produced against this
-snapshot.
+repository root for the observations the harness produced against the
+earlier snapshot `831d10e2` (issues #42, #46 and #47).
 
 ## Engine shape
 
@@ -98,3 +99,4 @@ crash but trips CppCommon's pool leak assertion at teardown instead. The
 trigger is narrower than "any fully-filled crossing modify" (the canonical
 workload contains dozens and does not trip it); we did not pin the internal
 branch. Full mechanics, provenance, and the upstream resolution are in `../../RESOLVED_FINDINGS.md`.
+Since 2026-10-15 this adapter pins the fix commit.
