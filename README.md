@@ -10,7 +10,7 @@ duplicates; to request coverage of an engine, contact contact@flash1.com.
 
 ## Results
 
-The harness has been run against **249 distinct matching engines** — every common FIFO book
+The harness has been run against **249 distinct matching engines**: every common FIFO book
 architecture, 20+ source languages. **162 reproduce the byte-identical consensus** (113 of them
 only after a documented correctness fix at their pinned commit; two have since merged that fix
 upstream and now conform as shipped, so 111 still carry ours) and are listed in
@@ -20,53 +20,53 @@ diverge, cannot finish their slowest scenario within the message budget, or cras
 
 The consensus oracle is also a bug-finder: across the 249 engines tested, wherever it surfaced a
 reportable finding we drafted a fix and reported it, respectfully: **183 GitHub issues filed
-upstream** for +250 distinct findings — **25 already fixed** by their maintainers, none declined
+upstream** for +250 distinct findings; **28 already fixed** by their maintainers, none declined
 ([`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md)). The full decomposition and per-engine one-line findings are in [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md); the industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md). 
 
-**No number or finding in any document in this repo ranks or judges an author's engineering quality** — the harness merely reports what each pinned commit does.
+**No number or finding in any document in this repo ranks or judges an author's engineering quality**: the harness merely reports what each pinned commit does.
 
-The **top 10 by worst-case throughput on seed 23** — each engine's lowest of the five
+The **top 10 by worst-case throughput on seed 23**: each engine's lowest of the five
 scenarios (seed 23, Graviton4 / Neoverse-V2, `-O3 -march=native`; median of 10 trials).
 FlashOne is the harness publisher's algorithm, shown as a reference; it stands as a target to
 beat on fully public, audited work. Every verdict in these rosters describes each engine **at its
-pinned commit** in [`SNAPSHOTS.md`](SNAPSHOTS.md) — a reproducible snapshot, not a claim about a
+pinned commit** in [`SNAPSHOTS.md`](SNAPSHOTS.md): a reproducible snapshot, not a claim about a
 project's current code or its authors' engineering quality.
 
-**‡** = authored by a professional trading-industry engineer — a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors state them publicly. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition — shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
+**‡** = authored by a professional trading-industry engineer: a **personal side project with no commercial intent, not their employer's work**, except where the Notes explicitly label an official vendor/org repo. Affiliations are as the authors state them publicly. · **★** = repository has 50+ GitHub stars. **Published figure** = the project's own advertised number under its own workload, hardware, and definition. It is shown as context, not directly comparable to this harness's worst-case. The industry-authored subset is broken out in [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md).
 
 | Engine | Language | Conformance | Worst-case M/s | Published figure | Notes |
 |:-------|:---------|:------------|:---------------|:-----------------|:------|
-| FlashOne | C++ | as shipped | 103.39 (normal) | — | reference target |
+| FlashOne | C++ | as shipped | 103.39 (normal) | - | reference target |
 | lcv3 / LC++ v3 ‡ | C++ | as shipped | 9.25 (normal) | ~42M/s | treap price levels + intrusive FIFO; ARM build needs an empty stand-in for the engine's x86-only `immintrin.h` include (engine unmodified); author: an independent C++ consultant at Tradeweb (ex-Credit Suisse AVP, ex-JPMorgan developer) |
-| e820 / weekend-orderbook ‡ | C | with fix | 8.19 | — | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
-| geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | — | author-contributed C++ port of geseq/orderbook |
-| melin | Rust | with fix | 7.86 | — | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
-| CppTrader (1041★) ‡ | C++ | with fix | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream — `RESOLVED_FINDINGS.md` [#42](https://github.com/chronoxor/CppTrader/issues/42); off the canonical path (open): incoming FOK / AON orders fill every maker at the aggressor's price [#46](https://github.com/chronoxor/CppTrader/issues/46), and crossing resting AON orders can execute unequal quantities and fill outside their limits [#47](https://github.com/chronoxor/CppTrader/issues/47); author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) |
-| raymondshe (56★) | Rust | with fix | 7.20 | — | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
+| e820 / weekend-orderbook ‡ | C | with fix | 8.19 | - | singly-linked orphan + aggressor-price fix [#1](https://github.com/oldfifteenpoundy/weekend-orderbook/issues/1); author: an IMC Trading engineer |
+| geseq/cpp-orderbook | C++ | as shipped | 7.94 (swing-25) | - | author-contributed C++ port of geseq/orderbook |
+| melin | Rust | with fix | 7.86 | - | BSL-1.1; stop-trigger cascade single-pass [#2](https://github.com/melin-engine/melin/issues/2) |
+| CppTrader (1041★) ‡ | C++ | with fix | 7.26 (normal) | ~7.2M upd/s | a `ModifyOrder` defect off the canonical path is fixed upstream (`RESOLVED_FINDINGS.md`) [#42](https://github.com/chronoxor/CppTrader/issues/42); off the canonical path (open): incoming FOK / AON orders fill every maker at the aggressor's price [#46](https://github.com/chronoxor/CppTrader/issues/46), and crossing resting AON orders can execute unequal quantities and fill outside their limits [#47](https://github.com/chronoxor/CppTrader/issues/47); author: Head of C++ Development at Finstek (an FX/CFD trading-platform vendor) |
+| raymondshe (56★) | Rust | with fix | 7.20 | - | MIT-Apache; phantom zero-qty match corrupts next order's id [#1](https://github.com/raymondshe/matchengine-raft/issues/1) |
 | llc993 (154★) | Rust | as shipped | 7.14 (swing-25) | ~7.2M/s | BTreeMap + slab pool + intrusive time-queue (exchange-core-inspired) |
-| Kautenja (309★) | C++ | with fix | 6.88 (normal) | — | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
-| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | — | std::map RB-tree book (clean); author: an ex-Citadel Securities engineer (17y in HFT) |
+| Kautenja (309★) | C++ | with fix | 6.88 (normal) | - | reject a duplicate live order-id (no self-linked FIFO / UAF) [#4](https://github.com/Kautenja/limit-order-book/issues/4) |
+| ndfex ‡ | C++ | as shipped | 6.825 (swing-25) | - | std::map RB-tree book (clean); author: an ex-Citadel Securities engineer (17y in HFT) |
 
 See [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) for the full list of
 all **162** conforming engines.
 
 ### Throughput by book structure
 
-Every conforming engine, classified by the data structure it uses to order price levels — the core
+Every conforming engine, classified by the data structure it uses to order price levels, the core
 algorithmic choice in a FIFO matcher. The figure is the best worst-case throughput any engine reached
 with that structure: an upper bound, since language and implementation confound a pure structural
 comparison (every leader above ~2 M/s is C, C++, or Rust).
 
 | Book structure (price ladder) | Fastest engine | Lang | Worst-case M/s | Engines | Notes |
 |:--|:--|:--|--:|--:|:--|
-| Proprietary structure | FlashOne | C++ | 103.39 | — | reference target; structure as disclosed in the paper |
+| Proprietary structure | FlashOne | C++ | 103.39 | - | reference target; structure as disclosed in the paper |
 | Treap (randomized balanced BST) | lcv3 | C++ | 9.25 | 1 | intrusive FIFO per level; fixed order and level pools |
-| Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid — price-indexed arena + heaps for best price |
-| Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice — 37% of the field (`std::map`, `TreeMap`) |
-| Sorted vector | melin | Rust | 7.86 | 17 | — |
+| Binary heap / priority queue | e820 | C | 8.19 | 14 | e820 is a hybrid: price-indexed arena + heaps for best price |
+| Red-black tree / ordered map | geseq/cpp-orderbook | C++ | 7.94 | 59 | the default choice, 37% of the field (`std::map`, `TreeMap`) |
+| Sorted vector | melin | Rust | 7.86 | 17 | - |
 | AVL tree | CppTrader | C++ | 7.26 | 5 | balanced BST (CppCommon `BinTreeAVL`) |
 | B-tree / B+tree | raymondshe | Rust | 7.20 | 27 | `BTreeMap`-per-side; the common Rust default |
-| Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | — |
+| Plain BST (unbalanced) | Kautenja | C++ | 6.88 | 1 | - |
 | Flat direct-indexed array (± bitmap) | asthamishra | Rust | 5.60 | 14 | O(1) by tick, but cache-thrashes a wide domain → lands lower |
 | Adaptive-radix / crit-bit tree | serum | Rust | 2.625 | 3 | serum de-chained as native code to remove VM penalty |
 | Linked-list price levels | coralme | Java | 1.97 | 2 | price-ordered level list; O(n) level lookup |
@@ -79,11 +79,11 @@ comparison (every leader above ~2 M/s is C, C++, or Rust).
 Throughput is what an exchange measures internally; what a trader experiences when the market
 moves is **latency**, and latency under load is a property of headroom: as the offered rate
 approaches an engine's sustainable throughput (ρ → 1), queueing delay diverges. The open-loop,
-coordinated-omission-free latency-under-load characterization — the saturation cliff at each
-engine's ceiling, and FlashOne's figures: a sub-microsecond P99 host-path latency through an
+coordinated-omission-free latency-under-load characterization is in [the paper](https://arxiv.org/abs/2606.01183)
+(Tables 6 and 9), together with its full measurement protocol. It covers the saturation cliff at
+each engine's ceiling, and FlashOne's figures: a sub-microsecond P99 host-path latency through an
 82 M msgs/s load, the P99 under 10 µs up to its clean operating edge at 116 M msgs/s (production
-configuration, on AMD EPYC processors) — is in [the paper](https://arxiv.org/abs/2606.01183)
-(Tables 6 and 9), together with its full measurement protocol.
+configuration, on AMD EPYC processors).
 
 ## Quick start
 
@@ -125,19 +125,52 @@ scripts/build_baselines.sh all
 scripts/run_challenge.py --compare liquibook quantcup exchange_core   # all 5 + worst-case ordering
 ```
 
+## CI/CD for your matching engine: 10,000 precomputed consensus seeds
+
+Check your engine's correctness on every commit against **100 billion order messages of precomputed
+consensus**, with no reference engine to build or run. Beyond the canonical seed 23,
+`reference/correctness_hash.txt` publishes the consensus hash of 10,000 random seeds
+(`workload/seeds.txt`) in all five scenarios, 50,000 results in all. `scripts/validate_seeds.py` runs
+your engine on any of them and compares the SHA-256 of its full report stream with the published
+hash; all it needs is `make` and your `.so`.
+
+```sh
+make                                                      # builds ./harness and ./generator
+scripts/validate_seeds.py --engine ./your_engine.so --seeds 50 --fail-fast --junit validation.xml
+```
+
+- **Every commit or pull request:** a fresh random draw, `--seeds 20` to `100` with `--fail-fast`.
+  Each run prints the `--sample-seed` that reproduces its draw, and `--estimate` times a short
+  calibration sample and projects how many seeds fit your time budget.
+- **Nightly or before a release:** the full set (leave out `--seeds`), with `--junit` for your CI
+  dashboard.
+- **Regressions:** keep every seed that ever failed in a file and run it on every build with
+  `--seed-list @regression_seeds.txt`.
+
+The exit status gates the job: `0` when every selected cell (one seed in one scenario) passed, `1`
+when any cell did not pass (wrong hash, crash, timeout, error) or the run was cancelled, `2` for a
+setup error. The hash is read from the harness's own result file, so nothing the engine prints can
+change the outcome, and every failing cell comes with a one-line `./harness` command that reproduces
+it. It checks correctness only: cells run in parallel on unpinned cores, so no throughput it reports
+is a benchmark figure (use `scripts/run_challenge.py` for those). A cell costs about a second of
+workload generation plus one run of your engine over ~2,000,000 messages;
+`scripts/validate_seeds.py --help` lists the other options (parallel jobs, timeouts, scenarios, JSON
+reports). The seeds are public, so for an adversarial evaluation use a private seed that is not in
+`workload/seeds.txt` (see [`docs/ANTI_CHEAT.md`](docs/ANTI_CHEAT.md)).
+
 ## Why worst-case throughput
 
 A matching engine is the serial heart of an exchange: per-symbol price–time matching is
 strictly sequential, so its single-core throughput caps the whole venue.[^serial] Order flow
-arrives in microbursts — Deutsche Börse's T7 measurements show inbound flow peaking in the
+arrives in microbursts: Deutsche Börse's T7 measurements show inbound flow peaking in the
 millions of messages a second at the gateway while only a few hundred thousand a second reach
-matching[^t7] — so a burst queues behind the matcher, and that queue, not the average speed,
+matching[^t7], so a burst queues behind the matcher, and that queue, not the average speed,
 becomes the worst-case delay in the moments that matter most.[^microburst] The feedback loop
 tightens over time: as the exchange gets faster, customers react faster and "send us more
 transactions in sharper peaks."[^t7]
 
 When the matcher falls behind, market makers are picked off at stale prices, lose money, and
-quote wider and thinner — costs that land on investors.[^armsrace][^marketquality] The
+quote wider and thinner, and those costs land on investors.[^armsrace][^marketquality] The
 benchmark's definitional result is therefore **worst-case throughput**: the lowest of an
 engine's five scenario results, with the scenario that produces it.
 
@@ -148,30 +181,26 @@ paper's §2.*[^paper]
 
 **Scope.** A single matching engine on one symbol, driven one message at a time through ~2.0M
 new/cancel/modify messages (an optional `engine_on_batch` entry point amortises the boundary
-cost for engines behind a language runtime — the per-message processing is unchanged). The
+cost for engines behind a language runtime; the per-message processing is unchanged). The
 comparison tables report an engine's batched figure only where it improves worst-case throughput
-by a meaningful margin (> 0.1 M/s); where batching is neutral or slower — as it measured for
-CPython — the one-at-a-time figure stands. The
+by a meaningful margin (> 0.1 M/s); where batching is neutral or slower (as it measured for
+CPython), the one-at-a-time figure stands. The
 engine emits its own report stream (OrderAck / Trade / CancelAck / ModifyAck / CancelReject /
 ModifyReject) over an inter-thread transport drained on an adjacent core, so the measured
 throughput includes the matcher-to-publisher hand-off a real exchange pays. Multi-core
 scaling, networking, and risk checks are out of scope.
 
 **Workload.** A deterministic, realistically shaped equity order flow: GBM mid-price,
-power-law depth,[^depth] and a 95% cancel[^cancel] / 15% IOC[^ioc] / 20% modify lifecycle —
+power-law depth,[^depth] and a 95% cancel[^cancel] / 15% IOC[^ioc] / 20% modify lifecycle,
 the paper benchmark's construction.[^paper] The canonical seed is **23**; the harness
 hand-rolls every distribution so a seed reproduces the same workload across compilers
 (see the determinism notes in `docs/METHODOLOGY.md`).
 
 **Correctness.** The engine's full report output is hashed (SHA-256) against
-`reference/correctness_hash.txt` — the byte-identical consensus first established from three
+`reference/correctness_hash.txt`, the byte-identical consensus first established from three
 independent engines (so it favours no single design) and since reproduced by the whole
-conforming field. It also holds pre-computed consensus hashes for 10,000 further random seeds
-(all five scenarios; `workload/seeds.txt`): `scripts/validate_seeds.py --engine <your.so>` validates an engine
-against all of them, or against `--seeds N` of them drawn at random, for CI pipelines. Recommended use: a fresh
-random draw on every commit or pull request (`--seeds 20` to `100` with `--fail-fast`; `--estimate` sizes it to
-your time budget), the full set nightly or before a release (`--junit` for your CI dashboard), and every seed that
-ever failed kept in a `--seed-list @file` that runs every time.
+conforming field. The same file holds consensus hashes for 10,000 further random seeds for CI
+pipelines; see [CI/CD for your matching engine](#cicd-for-your-matching-engine-10000-precomputed-consensus-seeds).
 
 **A full challenge** is 10 perf runs + 1 audit run per scenario
 (`scripts/run_challenge.py`); VALID only if every perf hash and the audit pass. The audit
@@ -189,17 +218,17 @@ conventions (`docs/CONFORMANCE.md`).
 
 ## The rosters
 
-- [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md) — the **162** conforming
+- [`CONSENSUS_CONFORMING_ENGINES.md`](CONSENSUS_CONFORMING_ENGINES.md): the **162** conforming
   engines (byte-identical on output and book state across 100 random seeds, **1 billion+ order
   messages** each, plus the conformance gate). **as shipped** = conforms unmodified;
   **with fix** = conforms after the minimal documented patch.
-- [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md) — the **87** whose output diverges,
+- [`NON_CONFORMING_ENGINES.md`](NON_CONFORMING_ENGINES.md): the **87** whose output diverges,
   or that cannot finish their worst scenario within budget. Non-conforming describes the output
   against the consensus, not engineering quality.
-- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md) — the 74 industry-authored
+- [`INDUSTRY_AUTHORED_ENGINES.md`](INDUSTRY_AUTHORED_ENGINES.md): the 74 industry-authored
   engines, with the official/production repos and the production DEX matchers broken out.
 - [`CORRECTNESS_FINDINGS.md`](CORRECTNESS_FINDINGS.md) /
-  [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md) — per-engine findings and the fixes already
+  [`RESOLVED_FINDINGS.md`](RESOLVED_FINDINGS.md): per-engine findings and the fixes already
   merged upstream.
 
 ## Repository layout
@@ -207,12 +236,12 @@ conventions (`docs/CONFORMANCE.md`).
 ```
 api/                    the C ABI an engine implements
 workload/               the deterministic workload generator
-src/                    the harness — runner, transport, correctness, audit, platform
+src/                    the harness: runner, transport, correctness, audit, platform
 adapters/               the three baseline-engine adapters (Liquibook, QuantCup, Exchange-core)
-additional_references/  42 worked adapter examples for third-party engines — the permissively-licensed (or author-permitted) subset of the ~136 adapted across the survey (20+ languages incl. C++/Rust/Go/Java/Python/TypeScript/JavaScript/C#/Zig/C/Haskell/OCaml/Scala/Kotlin/Ruby); the rest are held data-only
+additional_references/  42 worked adapter examples for third-party engines: the permissively-licensed (or author-permitted) subset of the ~136 adapted across the survey (20+ languages incl. C++/Rust/Go/Java/Python/TypeScript/JavaScript/C#/Zig/C/Haskell/OCaml/Scala/Kotlin/Ruby); the rest are held data-only
 patches/                source patches applied to baseline engines (QuantCup)
-reference/              the published canonical report output and its hash
-scripts/                build_baselines.sh, run_challenge.py, compare_results.py
+reference/              the published canonical report output and its hash, plus consensus hashes for 10,000 more seeds
+scripts/                build_baselines.sh, run_challenge.py, compare_results.py, validate_seeds.py
 docs/                   METHODOLOGY, INTEGRATION, ANTI_CHEAT, CONFORMANCE, PATCHES
 tests/                  a SHA-256 self-test and three anti-cheat cheat adapters
 CORRECTNESS_FINDINGS.md per-engine correctness verdict + filed-issue link, full audited set
@@ -230,7 +259,7 @@ SNAPSHOTS.md            the pinned upstream commit for every audited engine
 - Python 3.8+ for the wrapper scripts.
 - The `additional_references/` example adapters pull their own toolchains (Rust,
   Go, a JDK 11+ for the Java/JNI adapters, Node for the TypeScript/JavaScript adapters;
-  the Python adapters embed CPython) — each `build.sh` auto-installs the pinned
+  the Python adapters embed CPython): each `build.sh` auto-installs the pinned
   toolchain (rustup / go.dev / etc.) if it is absent, which requires `curl` and
   network access. The jxm35 adapter additionally needs a
   C++23 compiler and `libfmt` (`libfmt-dev`).
@@ -239,35 +268,35 @@ SNAPSHOTS.md            the pinned upstream commit for every audited engine
 
 Q. Why did you build this?
 
-A. To give the community a neutral, reproducible way to measure a matching engine's throughput and verify its correctness on identical work — something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. That oracle — the byte-identical consensus that independent open-source engines reproduce, first anchored by three of them — has already surfaced real bugs in several open-source matching engines, including a latent one in a codebase nearly nine years old.
+A. To give the community a neutral, reproducible way to measure a matching engine's throughput and verify its correctness on identical work: something that did not exist in the open. The workload, the baseline adapters, and the byte-identical reference hashes are all public, so anyone can run any engine against the same work and the same correctness oracle, on their own hardware. That oracle (the byte-identical consensus that independent open-source engines reproduce, first anchored by three of them) has already surfaced real bugs in several open-source matching engines, including a latent one in a codebase nearly nine years old.
 
-The same openness applies to our own claim: the paper's title — *"The World's Fastest Matching Engine Algorithm"* — is deliberately falsifiable. Beat FlashOne's published numbers on the same work and the title is wrong — a test we are openly inviting. If you reach comparable or higher numbers with your own design, or you think the method is unfair, we would love to hear from you.
+The same openness applies to our own claim: the paper's title, *"The World's Fastest Matching Engine Algorithm"*, is deliberately falsifiable. Beat FlashOne's published numbers on the same work and the title is wrong. That is a test we are openly inviting. If you reach comparable or higher numbers with your own design, or you think the method is unfair, we would love to hear from you.
 
-Q. Isn't this a self-serving benchmark — any conflict of interest in writing your own benchmark?
+Q. Isn't this a self-serving benchmark? Is there any conflict of interest in writing your own benchmark?
 
-A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical consensus that independent open-source engines reproduce — first established from three of them (Liquibook[^liquibook], QuantCup[^quantcup], Exchange-core[^exchangecore]) and since reproduced across the whole conforming field — not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions.
+A. The test is built in a way that our judgment does not enter it. The correctness reference is the byte-identical consensus that independent open-source engines reproduce, first established from three of them (Liquibook[^liquibook], QuantCup[^quantcup], Exchange-core[^exchangecore]) and since reproduced across the whole conforming field. It is not our say-so; the workload generator, the adapters, and the reference hashes are public and deterministic, so anyone can independently verify their internal workings. We do not host a leaderboard or rank submissions.
 
-Q. I only want to check that my engine is correct — can I ignore the throughput number?
+Q. I only want to check that my engine is correct. Can I ignore the throughput number?
 
-A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the byte-identical consensus *and* audits the live order book at random points. A `Verdict: VALID` means your engine reproduces the consensus output and maintains a real book, regardless of speed — for many users that correctness signal is the more valuable half.
+A. Yes. Run `--mode audit`: it verifies the full report-stream hash against the byte-identical consensus *and* audits the live order book at random points. A `Verdict: VALID` means your engine reproduces the consensus output and maintains a real book, regardless of speed. For many users that correctness signal is the more valuable half.
 
 Q. Isn't a fast matching engine easy to build?
 
-A. This question conflates implementing a fast matcher with inventing one. **Implementing** a fast one is easy — a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is an order of magnitude faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
+A. This question conflates implementing a fast matcher with inventing one. **Implementing** a fast one is easy: a textbook tree-of-lists matcher is straightforward, and most trading-industry engineers have written one. **Inventing** a fast one that is an order of magnitude faster on the same hardware is not, and the intuition that conflates the two survives only because the gap has never been plotted. 
 
-Plotted, it is stark: all **161** conforming open-source engines top out at **9.25 M/s** — the band that language choice, cache tuning, and an OS tweak buy — and **nothing occupies the ~94 M/s above it**. FlashOne reaches **103.39 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so an 11.2× margin is not what implementation tweaks accumulate to.
+Plotted, it is stark: all **161** conforming open-source engines top out at **9.25 M/s** (the band that language choice, cache tuning, and an OS tweak buy), and **nothing occupies the ~94 M/s above it**. FlashOne reaches **103.39 M/s** not as a faster *implementation* of the same design but as a different *algorithm* (the structures are disclosed in [the paper](https://arxiv.org/abs/2606.01183)); in HFT a 5–10% gain is already substantial, so an 11.2× margin is not what implementation tweaks accumulate to.
 
 Q. Isn't matcher latency an insignificant part of overall wire-to-wire latency?
 
-A. Yes, on average. But the matcher's throughput headroom — not its average latency — is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. Deutsche Börse (one of Europe's largest exchange operators) makes the point itself: "Our customers are constantly getting faster and send us more transactions in sharper peaks → requires higher throughput on our side."[^t7]
+A. Yes, on average. But the matcher's throughput headroom, not its average latency, is what shapes the P99 latency curve, and that tail is exactly what a burst exposes. Deutsche Börse (one of Europe's largest exchange operators) makes the point itself: "Our customers are constantly getting faster and send us more transactions in sharper peaks → requires higher throughput on our side."[^t7]
 
-Q. There are a lot of variables the challenge doesn't consider — networking, exchange-specific or per-jurisdiction rules, and the like.
+Q. There are a lot of variables the challenge doesn't consider: networking, exchange-specific or per-jurisdiction rules, and the like.
 
-A. By design. The challenge is built to compare *matching engine algorithms* apples-to-apples, not whole *matching engines*. A deployed engine also carries networking, exchange-specific rules, and per-jurisdiction regulatory requirements that differ enormously from venue to venue — so comparing full engines across those differences would mean far less. Holding those layers out of scope is exactly what isolates the algorithm so two of them can be measured on identical work.
+A. By design. The challenge is built to compare *matching engine algorithms* apples-to-apples, not whole *matching engines*. A deployed engine also carries networking, exchange-specific rules, and per-jurisdiction regulatory requirements that differ enormously from venue to venue, so comparing full engines across those differences would mean far less. Holding those layers out of scope is exactly what isolates the algorithm so two of them can be measured on identical work.
 
 ## License
 
-MIT — see `LICENSE`. The three baseline engines are fetched from their own
+MIT (see `LICENSE`). The three baseline engines are fetched from their own
 upstream repositories under their own licenses; `docs/PATCHES.md` records every
 modification made to build them.
 
@@ -284,13 +313,13 @@ the paper; the notes below cite the specific sources behind each claim.
 
 [^paper]: Jake Yoon. 2026. *The World's Fastest Matching Engine Algorithm.* Flash One Technologies. [arXiv:2606.01183](https://arxiv.org/abs/2606.01183). The harness, baseline adapters, and byte-identical reference hashes are released with the paper so its results are independently reproducible.
 [^microburst]: That order flow concentrates in short, microsecond-scale bursts that dominate the latency tail: Deutsche Börse Group, *Xetra Insights* (2016) and *Insights into Trading System Dynamics: Deutsche Börse's T7* (2025); Albert J. Menkveld, "High-Frequency Trading as Viewed through an Electron Microscope," *Financial Analysts Journal* 74(2), 2018. doi:10.2469/faj.v74.n2.1
-[^t7]: Sergej Teverovski (Head of Section, Xetra/Eurex Application Development, Deutsche Börse AG), *T7 — Latency Roadmap*, Deutsche Börse Group Open Day 2023 (21 Sep 2023) — the source of the figures quoted here (857 million daily requests, 13 Mar 2023; 98.6% non-persistent order entry, 4 Aug 2023; and the gateway-to-matching throughput gap — inbound flow peaking in the millions of messages/second at the gateway against a few hundred thousand/second at the start of matching) and of the "T7 latency ↔ customer reaction time" feedback loop and the "constant low latency … in high load situations (aka bursts)" target. <https://www.deutsche-boerse.com/resource/blob/3690194/fe6b01b1e14800eb40374a95516debf2/data/Open%20Day%202023%20-%20Presentation,%20T7-Latency%20Roadmap.pdf>
-[^armsrace]: The latency-arbitrage ("stale-quote sniping") race between liquidity providers cancelling stale quotes and fast traders picking them off: Matteo Aquilina, Eric Budish, and Peter O'Neill, "Quantifying the High-Frequency Trading Arms Race," *Quarterly Journal of Economics* 137(1), 2022, 493–564 — they estimate eliminating sniping would cut investors' cost of liquidity by up to ~17%. doi:10.1093/qje/qjab032. See also Eric Budish, Peter Cramton, and John Shim, "The High-Frequency Trading Arms Race: Frequent Batch Auctions as a Market Design Response," *QJE* 130(4), 2015. doi:10.1093/qje/qjv027
+[^t7]: Sergej Teverovski (Head of Section, Xetra/Eurex Application Development, Deutsche Börse AG), *T7 – Latency Roadmap*, Deutsche Börse Group Open Day 2023 (21 Sep 2023): the source of the figures quoted here (857 million daily requests, 13 Mar 2023; 98.6% non-persistent order entry, 4 Aug 2023; and the gateway-to-matching throughput gap: inbound flow peaking in the millions of messages/second at the gateway against a few hundred thousand/second at the start of matching) and of the "T7 latency ↔ customer reaction time" feedback loop and the "constant low latency … in high load situations (aka bursts)" target. <https://www.deutsche-boerse.com/resource/blob/3690194/fe6b01b1e14800eb40374a95516debf2/data/Open%20Day%202023%20-%20Presentation,%20T7-Latency%20Roadmap.pdf>
+[^armsrace]: The latency-arbitrage ("stale-quote sniping") race between liquidity providers cancelling stale quotes and fast traders picking them off: Matteo Aquilina, Eric Budish, and Peter O'Neill, "Quantifying the High-Frequency Trading Arms Race," *Quarterly Journal of Economics* 137(1), 2022, 493–564. They estimate eliminating sniping would cut investors' cost of liquidity by up to ~17%. doi:10.1093/qje/qjab032. See also Eric Budish, Peter Cramton, and John Shim, "The High-Frequency Trading Arms Race: Frequent Batch Auctions as a Market Design Response," *QJE* 130(4), 2015. doi:10.1093/qje/qjv027
 [^serial]: Per-symbol matching is strictly serial under price–time priority, so its single-core throughput is a hard ceiling no surrounding parallelism can lift (Gene M. Amdahl, AFIPS 1967, doi:10.1145/1465482.1465560); once a burst exceeds that ceiling, end-to-end latency is governed by queuing delay rather than compute. Publicly documented per-partition matching ceilings are on the order of ~300,000 orders/s (Deutsche Börse T7; Eurex T7 documentation, 2024).
 [^marketquality]: Faster matching and lower latency measurably tighten spreads and improve market quality (with diminishing returns once fast access is already available): David M. Kemme, Thomas H. McInish, and Jiang Zhang, "Market fairness and efficiency: Evidence from the Tokyo Stock Exchange," *Journal of Banking & Finance* 134, 2022, 106309 (doi:10.1016/j.jbankfin.2021.106309); Hamish Murray, Thu Phuong Pham, and Harminder Singh, "Latency reduction and market quality: The case of the Australian Stock Exchange," *International Review of Financial Analysis* 46, 2016, 257–265 (doi:10.1016/j.irfa.2015.09.001).
-[^cancel]: Modern equity order flow is cancel-dominated — roughly 95% of orders are cancelled and trade-to-order ratios are only a few percent: Marta Khomyn and Tālis J. Putniņš, "Algos gone wild: What drives the extreme order cancellation rates in modern markets?," *Journal of Banking & Finance* 129, 2021, 106170 (doi:10.1016/j.jbankfin.2021.106170); U.S. SEC, *Quote Lifetime Distributions* (2013) and *Trade-to-Order Volume Ratios* (2022).
+[^cancel]: Modern equity order flow is cancel-dominated (roughly 95% of orders are cancelled and trade-to-order ratios are only a few percent): Marta Khomyn and Tālis J. Putniņš, "Algos gone wild: What drives the extreme order cancellation rates in modern markets?," *Journal of Banking & Finance* 129, 2021, 106170 (doi:10.1016/j.jbankfin.2021.106170); U.S. SEC, *Quote Lifetime Distributions* (2013) and *Trade-to-Order Volume Ratios* (2022).
 [^ioc]: The material share of immediate-or-cancel (IOC) liquidity-taking instructions in real order flow: Sida Li, Mao Ye, and Miles Zheng, "Refusing the Best Price?," *Journal of Financial Economics* 147(2), 2023, 317–337. doi:10.1016/j.jfineco.2022.11.004
 [^depth]: Heavy-tailed / power-law limit-order-book depth profiles: Jean-Philippe Bouchaud, Marc Mézard, and Marc Potters, "Statistical properties of stock order books," *Quantitative Finance* 2, 2002; Rama Cont, Sasha Stoikov, and Rishi Talreja, "A stochastic model for order book dynamics," Columbia University, 2010; Martin D. Gould et al., "Limit order books," *Quantitative Finance* 13(11), 2013; Ilija I. Zovko and J. Doyne Farmer, "The power of patience: A behavioral regularity in limit-order placement," *Quantitative Finance* 2(5), 2002.
 [^liquibook]: Object Computing, Inc. 2013. *Liquibook: An Open Source C++ Order Matching Engine.* <https://github.com/ObjectComputing/liquibook>
-[^quantcup]: QuantCup 1 Contest, 2011 — *Price–Time Matching Engine* (winning entry), sponsored by Tower Research Capital. Original C entry: <https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef>; the harness builds the C++/Boost port at <https://github.com/ajtulloch/quantcup-orderbook> (the upstream pinned in `docs/PATCHES.md`).
+[^quantcup]: QuantCup 1 Contest, 2011: *Price–Time Matching Engine* (winning entry), sponsored by Tower Research Capital. Original C entry: <https://gist.github.com/druska/d6ce3f2bac74db08ee9007cdf98106ef>; the harness builds the C++/Boost port at <https://github.com/ajtulloch/quantcup-orderbook> (the upstream pinned in `docs/PATCHES.md`).
 [^exchangecore]: Maksim Zheravin. 2019. *Exchange-core: Ultra-fast matching engine.* <https://github.com/exchange-core/exchange-core>
